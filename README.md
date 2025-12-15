@@ -35,7 +35,7 @@ flowchart TD
 c:\projects\codes
 │
 ├── server.py                 # Flask API (REST + SSE)
-├── network2.py               # Packet detection engine (Scapy)
+├── detector.py               # Packet detection engine (Scapy)
 ├── ddossample.py             # DDoS traffic generator (demo)
 ├── test.py                   # Simple sniffer example
 ├── realtime_logs.csv         # CSV log file (written by detection)
@@ -69,7 +69,7 @@ python server.py
 pip install scapy requests
 
 # Run detection (writes to realtime_logs.csv)
-python network2.py
+python detector.py
 ```
 Notes:
 - Packet capture requires appropriate privileges and the correct NPF interface string (`admincheck.py` can help identify interfaces).
@@ -114,7 +114,7 @@ curl "http://example.com/login?user=admin&pass=%27%20UNION%20SELECT%201,2"
 curl "http://example.com/?q=<script>alert(1)</script>"
 curl "http://example.com/?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
 ```
-Ensure `network2.py` is running and sniffing the correct interface.
+Ensure `detector.py` is running and sniffing the correct interface.
 
 ## Limitations
 - Pattern-based SQLi/XSS may produce false positives
