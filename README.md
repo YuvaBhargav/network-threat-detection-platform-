@@ -1,206 +1,130 @@
-# Network Threat Detection & Analytics Platform
+# Network Threat Detection & Analytics
 
-A real-time network threat detection and analytics project built to understand how security monitoring systems work end-to-end.  
-The system captures live network traffic, detects common attack patterns, enriches events using OSINT feeds, and visualizes threats through a live web dashboard.
-
-This project was developed as part of a **B.Tech final semester project**, with a focus on learning detection engineering, packet analysis, and real-time security data pipelines rather than building a production-grade IDS.
-
----
+A real-time network threat detection and analytics project that captures live traffic, detects common attack patterns, enriches events using OSINT feeds, and visualizes threats on a web dashboard. Built as a learning-focused project to understand detection engineering, packet analysis, and streaming analytics.
 
 ## Features
-
-### Threat Detection
-- DDoS and SYN flood detection (volume and ratio based)
-- Port scanning detection
-- SQL Injection and XSS detection (pattern-based)
-- OSINT enrichment using public threat intelligence feeds
-
-### Analytics & Visualization
-- Real-time threat streaming using Server-Sent Events (SSE)
-- Interactive dashboard with:
-  - Threat counters
-  - Time-series trends
-  - Threat distribution charts
-  - Filtering, sorting, and pagination
+- Threat detection: DDoS, SYN flood (ratio-based), port scanning, SQL Injection, XSS
+- OSINT enrichment: Feodo Tracker (IPs), URLhaus (domains)
+- Real-time streaming: Server-Sent Events (SSE)
+- Dashboard: counters, time-series trends, distribution charts, filtering, sorting, pagination
 - Dark/light theme toggle
-
-### Alerting
-- Email alerts for high-confidence detections
-- Alert throttling to prevent notification spam
-
----
+- Email alerts with throttling
 
 ## Tech Stack
-
-### Detection Engine
-- Python
-- Scapy
-
-### Backend API
-- Flask
-- Flask-CORS
-- pandas
-- numpy
-- Server-Sent Events (SSE)
-
-### Frontend
-- React
-- Recharts
-
-### Threat Intelligence
-- Feodo Tracker (malicious IPs)
-- URLhaus (malicious domains)
-
-### Data Pipeline
-- CSV-based log ingestion (used for simplicity and learning purposes)
-
----
+- Detection: Python, Scapy, regex patterns, OSINT feeds
+- Backend: Flask, Flask-CORS, pandas, numpy, SSE
+- Frontend: React, Recharts
+- Storage: CSV log (simple, learning-oriented)
 
 ## Architecture
-
+```mermaid
 flowchart TD
     A[Network Traffic] --> B[Scapy Detection Engine]
     B --> C[Threat Detection Logic]
     C -->|Detected Events| D[CSV Threat Logs]
     C -->|High Severity| E[Email Alerts]
-    C -->|Threat Intel Lookup| F[OSINT Feeds (Feodo, URLhaus)]
+    C -->|Threat Intel Lookup| F[OSINT Feeds]
     D --> G[Flask Backend API]
-    G -->|REST API| H[React Dashboard]
-    G -->|Server-Sent Events| H
+    G -->|REST| H[React Dashboard]
+    G -->|SSE| H
     H --> I[Live Charts & Analytics]
-
-
-
-Network Traffic
-|
-v
-[ Scapy Detection Engine ]
-|
-v
-[ CSV Threat Logs ]
-|
-v
-[ Flask API ]
-| |
-| REST | SSE
-v v
-[ React Analytics Dashboard ]
-
-OSINT Feeds → Detection Engine
-Detection Engine → Email Alerts
-
-
----
+```
 
 ## Project Structure
-
-
-
-network-threat-detection-platform/
+```
+c:\projects\codes
 │
-├── backend/
-│ ├── api/
-│ │ └── server.py
-│ ├── detectors/
-│ │ └── detector.py
-│ ├── data/
-│ │ └── realtime_logs.csv (gitignored)
-│ └── requirements.txt
+├── server.py                 # Flask API (REST + SSE)
+├── network2.py               # Packet detection engine (Scapy)
+├── ddossample.py             # DDoS traffic generator (demo)
+├── test.py                   # Simple sniffer example
+├── realtime_logs.csv         # CSV log file (written by detection)
 │
-├── frontend/
-│ └── threat-analytics-ui/
-│ ├── src/
-│ ├── public/
-│ └── package.json
-│
-├── README.md
-├── LICENSE
-└── .gitignore
+└── threat-analytics-ui/      # React dashboard
+    ├── src/
+    ├── public/
+    ├── package.json
+    └── README.md
+```
 
-
----
-
-## Setup Instructions
-
+## Setup
 ### Prerequisites
 - Python 3.10+
-- Node.js 18–20 (LTS recommended)
-- Npcap (for packet capture on Windows)
+- Node.js 18–20 (LTS)
+- Npcap (Windows packet capture)
 
----
-
-### 1. Clone the Repository
+### Backend
 ```bash
-git clone https://github.com/<your-username>/network-threat-detection-platform.git
-cd network-threat-detection-platform
+# Install dependencies
+pip install flask flask-cors pandas numpy
 
-2. Backend Setup
-pip install -r backend/requirements.txt
-python -m backend.api.server
+# Run the API
+python server.py
+# API: http://localhost:5000
+```
 
+### Detection Engine
+```bash
+# Optional: additional dependencies for detection
+pip install scapy requests
 
-The Flask API runs on:
+# Run detection (writes to realtime_logs.csv)
+python network2.py
+```
+Notes:
+- Packet capture requires appropriate privileges and the correct NPF interface string (`admincheck.py` can help identify interfaces).
+- Email alerts read credentials from environment variables.
 
-http://localhost:5000
-
-3. Start Detection Engine
-python -m backend.detectors.detector
-
-
-Note: Packet capture requires appropriate privileges and a valid network interface.
-
-4. Frontend Setup
-cd frontend/threat-analytics-ui
+### Frontend
+```bash
+cd threat-analytics-ui
 npm install
 npm start
+# Dashboard: http://localhost:3000
+```
 
-
-The dashboard runs on:
-
-http://localhost:3000
-
-Configuration
-
-Example environment variables:
-
+## Configuration
+Environment variables for alerts:
+```
 ALERT_SENDER_EMAIL=your_email@gmail.com
 ALERT_SENDER_PASSWORD=your_app_password
-ALERT_RECIPIENT_EMAILS=security@example.com
-REACT_APP_API_BASE=http://localhost:5000
+ALERT_RECIPIENT_EMAILS=security@example.com,secops@example.com
+```
+The dashboard fetches from `http://localhost:5000` by default.
 
-Limitations
+## API Endpoints
+- `GET /api/threats` → JSON array of threats (`timestamp`, `threatType`, `sourceIP`, `destinationIP`, `ports`)
+- `GET /api/threats/stream` → SSE stream of latest threat events + heartbeat
+- `GET /api/health` → Basic status (log file existence and size)
 
-SQL Injection and XSS detection is regex-based and may produce false positives
+## Testing
+### Generate DDoS-like traffic (demo)
+```bash
+python ddossample.py
+```
 
-Static thresholds are used for volumetric attacks
+### Trigger SQL Injection/XSS patterns
+Send HTTP requests with typical injection payloads to any site (your outbound request payload is inspected):
+```bash
+# SQL Injection examples
+curl "http://example.com/search?q=%27%20OR%201%3D1"
+curl "http://example.com/login?user=admin&pass=%27%20UNION%20SELECT%201,2"
 
-CSV storage is not suitable for high-scale or concurrent environments
+# XSS examples
+curl "http://example.com/?q=<script>alert(1)</script>"
+curl "http://example.com/?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+```
+Ensure `network2.py` is running and sniffing the correct interface.
 
-No authentication or access control
+## Limitations
+- Pattern-based SQLi/XSS may produce false positives
+- Static volumetric thresholds
+- CSV storage is not suitable for high-scale or concurrent writes
+- No authentication or access control
+- Educational, not production-hardened
 
-Not designed for production deployment
+## License
+MIT License
 
-These trade-offs were made intentionally to prioritize learning and clarity.
-
-Learning Outcomes
-
-Through this project, I gained hands-on experience with:
-
-Packet-level network traffic analysis
-
-Detection logic design and trade-offs
-
-Real-time backend-to-frontend data streaming
-
-Security analytics dashboard design
-
-OSINT integration in detection pipelines
-
-License
-
-This project is licensed under the MIT License.
-
-Disclaimer
-
-This project is for educational and research purposes only.
-Do not deploy this system in production or expose it to the public internet.
+## Disclaimer
+This project is for educational and research purposes only. Do not deploy to production or expose to the public internet.
