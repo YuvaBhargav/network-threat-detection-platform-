@@ -29,11 +29,11 @@ A real-time network threat detection and analytics project that captures live tr
 ### System Architecture Diagram
 ```mermaid
 flowchart TB
-    subgraph "Network Layer"
-        A[Network Traffic] --> B[Packet Capture<br/>Scapy]
+    subgraph Network["Network Layer"]
+        A[Network Traffic] --> B["Packet Capture (Scapy)"]
     end
     
-    subgraph "Detection Engine"
+    subgraph Detection["Detection Engine"]
         B --> C[Threat Detection Logic]
         C --> D1[DDoS Detection]
         C --> D2[SYN Flood Detection]
@@ -47,37 +47,37 @@ flowchart TB
         D5 --> E
     end
     
-    subgraph "Enrichment Services"
-        E --> F1[OSINT Feeds<br/>Feodo Tracker<br/>URLhaus]
-        E --> F2[Geolocation Service<br/>ipapi.co<br/>ip-api.com<br/>ipinfo.io]
+    subgraph Enrichment["Enrichment Services"]
+        E --> F1["OSINT Feeds (Feodo Tracker, URLhaus)"]
+        E --> F2["Geolocation Service (ipapi.co, ip-api.com, ipinfo.io)"]
         F1 --> G[Threat Enrichment]
         F2 --> G
     end
     
-    subgraph "Storage Layer"
-        G --> H1[CSV Threat Logs<br/>realtime_logs.csv]
-        G --> H2[Alert History<br/>alert_history.json]
-        G --> H3[Email Alerts<br/>SMTP]
+    subgraph Storage["Storage Layer"]
+        G --> H1["CSV Threat Logs (realtime_logs.csv)"]
+        G --> H2["Alert History (alert_history.json)"]
+        G --> H3["Email Alerts (SMTP)"]
     end
     
-    subgraph "Backend API"
+    subgraph Backend["Backend API"]
         H1 --> I[Flask REST API]
         H2 --> I
-        I --> J1[/api/threats<br/>GET all threats]
-        I --> J2[/api/threats/stream<br/>SSE stream]
-        I --> J3[/api/geolocation/:ip<br/>IP lookup]
-        I --> J4[/api/alerts<br/>Alert history]
-        I --> J5[/api/health<br/>Health check]
+        I --> J1["/api/threats - GET all threats"]
+        I --> J2["/api/threats/stream - SSE stream"]
+        I --> J3["/api/geolocation/:ip - IP lookup"]
+        I --> J4["/api/alerts - Alert history"]
+        I --> J5["/api/health - Health check"]
     end
     
-    subgraph "Frontend Dashboard"
+    subgraph Frontend["Frontend Dashboard"]
         J1 --> K[React Dashboard]
         J2 --> K
         J3 --> K
         J4 --> K
-        K --> L1[Dashboard View<br/>Threat Analytics]
-        K --> L2[IP Analytics Page<br/>Detailed IP Analysis]
-        L1 --> M[Charts & Visualizations<br/>Recharts]
+        K --> L1["Dashboard View - Threat Analytics"]
+        K --> L2["IP Analytics Page - Detailed IP Analysis"]
+        L1 --> M["Charts & Visualizations (Recharts)"]
         L2 --> M
     end
     
@@ -117,7 +117,7 @@ sequenceDiagram
     API-->>Frontend: JSON Response
     
     Frontend->>API: GET /api/threats/stream
-    API->>Frontend: SSE Stream (Real-time)
+    API->>Frontend: SSE Stream Real-time
     
     Storage->>API: New Threat Detected
     API->>Frontend: Push Update via SSE
@@ -126,19 +126,19 @@ sequenceDiagram
 ### Component Architecture
 ```mermaid
 graph LR
-    subgraph "Backend Components"
-        A[config.py<br/>Configuration Manager]
-        B[detector.py<br/>Packet Detection]
-        C[geolocation.py<br/>IP Geolocation]
-        D[alert_history.py<br/>Alert Tracking]
-        E[server.py<br/>Flask API]
+    subgraph Backend["Backend Components"]
+        A["config.py - Configuration Manager"]
+        B["detector.py - Packet Detection"]
+        C["geolocation.py - IP Geolocation"]
+        D["alert_history.py - Alert Tracking"]
+        E["server.py - Flask API"]
     end
     
-    subgraph "Frontend Components"
-        F[App.js<br/>Router & Navigation]
-        G[ThreatAnalytics.js<br/>Main Dashboard]
-        H[IPAnalytics.js<br/>IP Analysis Page]
-        I[App.css<br/>Modern Styling]
+    subgraph Frontend["Frontend Components"]
+        F["App.js - Router & Navigation"]
+        G["ThreatAnalytics.js - Main Dashboard"]
+        H["IPAnalytics.js - IP Analysis Page"]
+        I["App.css - Modern Styling"]
     end
     
     A --> B
