@@ -176,16 +176,18 @@ def stream_threats():
                     yield f"data: {json.dumps(threats[-1], cls=NpEncoder)}\n\n"
                 last_size = current_size
             now = time.time()
-            if now - last_heartbeat > 15:
+            if now - last_heartbeat > 10:
                
                 yield ": keepalive\n\n"
                 last_heartbeat = now
             time.sleep(1)  # Check for new entries every second
-
     response = Response(event_stream(), content_type='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['Connection'] = 'keep-alive'
     response.headers['Access-Control-Allow-Origin'] = '*'  
+    response.headers['X-Accel-Buffering'] = 'no'
+    response.headers['Transfer-Encoding'] = 'chunked'
+    response.headers['Content-Type'] = 'text/event-stream'
     return response
 
 @app.route('/api/health', methods=['GET'])
@@ -296,7 +298,7 @@ if __name__ == '__main__':
     if os.path.exists(LOG_FILE):
         print(f"Log file size: {os.path.getsize(LOG_FILE)} bytes")
     try:
-        app.run(debug=True, port=5000, host='0.0.0.0')
+        app.run(debug=True, port=5000, host='0.0.0.0', use_reloader=False)
     except Exception as e:
         print(f"Failed to start server: {e}")
         import traceback

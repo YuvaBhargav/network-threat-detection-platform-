@@ -35,6 +35,7 @@ function ThreatAnalytics() {
   const [showThreatModal, setShowThreatModal] = useState(false);
   const [alertHistory, setAlertHistory] = useState([]);
   const [showAlertHistory, setShowAlertHistory] = useState(false);
+  const [alertStats, setAlertStats] = useState(null);
   const DDOS_THRESHOLD = 300;
   const PORTSCAN_THRESHOLD = 10;
 
@@ -293,6 +294,15 @@ function ThreatAnalytics() {
       });
   }, []);
 
+  const fetchAlertStats = useCallback(() => {
+    fetch('http://localhost:5000/api/alerts/stats')
+      .then(response => response.json())
+      .then(data => {
+        setAlertStats(data);
+      })
+      .catch(() => {});
+  }, []);
+
   // Open threat details modal
   const openThreatDetails = useCallback((threat) => {
     setSelectedThreat(threat);
@@ -315,9 +325,8 @@ function ThreatAnalytics() {
     
     fetch('http://localhost:5000/api/threats', {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      mode: 'cors',
+      cache: 'no-cache'
     })
       .then(response => {
         if (!response.ok) {
@@ -355,7 +364,8 @@ function ThreatAnalytics() {
   useEffect(() => {
     fetchThreats();
     fetchAlertHistory();
-  }, [fetchThreats, fetchAlertHistory]);
+    fetchAlertStats();
+  }, [fetchThreats, fetchAlertHistory, fetchAlertStats]);
 
   // Set up event source for real-time updates
   const sseRef = useRef(null);
@@ -513,6 +523,25 @@ function ThreatAnalytics() {
         </div>
       </div>
 
+      {alertStats && (
+        <div className="stats-container">
+          <div className="stat-card">
+            <div className="stat-icon">📣</div>
+            <div className="stat-content">
+              <h3>Total Alerts</h3>
+              <p className="stat-value">{alertStats.total}</p>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon">⏳</div>
+            <div className="stat-content">
+              <h3>Alerts in 24h</h3>
+              <p className="stat-value">{alertStats.recent_24h}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="filters-container">
         <input
           className="search-input"
@@ -533,6 +562,39 @@ function ThreatAnalytics() {
           <option value="SQL Injection">SQL Injection</option>
           <option value="XSS">XSS</option>
         </select>
+      </div>
+
+      <div className="threats-table">
+        <div className="table-header">
+          <h2>Top Offender IPs</h2>
+        </div>
+        <div className="table-container">
+          <table className="styled-table">
+            <thead>
+              <tr>
+                <th>Source IP</th>
+                <th>Threat Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(threats.reduce((acc, t) => {
+                const ip = t.sourceIP;
+                if (!ip || ip === 'N/A') return acc;
+                acc[ip] = (acc[ip] || 0) + 1;
+                return acc;
+              }, {}))
+                .map(([addr, count]) => ({ addr, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 5)
+                .map((row, idx) => (
+                  <tr key={idx} onClick={() => navigate(`/analytics/ip/${encodeURIComponent(row.addr)}`)} style={{ cursor: 'pointer' }}>
+                    <td>{row.addr}</td>
+                    <td>{row.count}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="charts-container">
