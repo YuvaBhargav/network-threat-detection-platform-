@@ -58,6 +58,20 @@ This project was developed as part of a **B.Tech final semester project**, with 
 
 ## Architecture
 
+flowchart TD
+    A[Network Traffic] --> B[Scapy Detection Engine]
+
+    B --> C[Threat Detection Logic]
+    C -->|Detected Events| D[CSV Threat Logs]
+
+    C -->|High Severity| E[Email Alerts]
+    C -->|Threat Intel Lookup| F[OSINT Feeds<br/>(Feodo, URLhaus)]
+
+    D --> G[Flask Backend API]
+    G -->|REST API| H[React Dashboard]
+    G -->|Server-Sent Events| H
+
+    H --> I[Live Charts & Analytics]
 
 
 Network Traffic
