@@ -10,18 +10,15 @@ import numpy as np
 app = Flask(__name__)
 CORS(app)
 
-# 🚀 Configuration - Add this section
-LOG_DIR = Path("C:/projects/codes")  # Using forward slashes works on Windows too
-LOG_FILE = LOG_DIR / "realtime_logs.csv"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+LOG_FILE = os.path.join(DATA_DIR, "realtime_logs.csv")
 
-# Ensure log directory exists
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_threats_from_csv():
     if os.path.exists(LOG_FILE):
         try:
             df = pd.read_csv(LOG_FILE)
-            # Standardize column names for React frontend
             df = df.rename(columns={
                 "Timestamp": "timestamp",
                 "Threat Type": "threatType", 
@@ -29,8 +26,7 @@ def get_threats_from_csv():
                 "Destination IP": "destinationIP",
                 "Ports": "ports"
             })
-            
-            # Replace NaN values with empty strings to avoid JSON serialization issues
+
             df = df.fillna("")
             
             return df.to_dict('records')
@@ -39,7 +35,7 @@ def get_threats_from_csv():
             return []
     return []
 
-# Custom JSON encoder to handle NaN values
+
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer):
@@ -67,12 +63,12 @@ def stream_threats():
             if current_size > last_size:
                 threats = get_threats_from_csv()
                 if threats:
-                    # Use custom encoder to handle NaN values
+                    
                     yield f"data: {json.dumps(threats[-1], cls=NpEncoder)}\n\n"
                 last_size = current_size
             now = time.time()
             if now - last_heartbeat > 15:
-                # SSE comment keepalive
+               
                 yield ": keepalive\n\n"
                 last_heartbeat = now
             time.sleep(1)  # Check for new entries every second
@@ -80,7 +76,7 @@ def stream_threats():
     response = Response(event_stream(), content_type='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['Connection'] = 'keep-alive'
-    response.headers['Access-Control-Allow-Origin'] = '*'  # Add this line
+    response.headers['Access-Control-Allow-Origin'] = '*'  
     return response
 
 @app.route('/api/health', methods=['GET'])

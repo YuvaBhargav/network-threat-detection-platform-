@@ -30,12 +30,11 @@ XSS_THRESHOLD = 3
 SYN_FLOOD_THRESHOLD = 200
 SYN_ACK_RATIO_THRESHOLD = 0.1
 
-LOG_DIR = r"C:\projects\codes"
-LOG_FILE = os.path.join(LOG_DIR, "realtime_logs.csv")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+LOG_FILE = os.path.join(DATA_DIR, "realtime_logs.csv")
 
-
-
-os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, "w", newline="") as f:
