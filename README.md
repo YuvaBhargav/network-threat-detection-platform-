@@ -29,11 +29,11 @@ A real-time network threat detection and analytics project that captures live tr
 ### System Architecture Diagram
 ```mermaid
 flowchart TB
-    subgraph "Network Layer"
-        A[Network Traffic] --> B[Packet Capture<br/>Scapy]
+    subgraph Network_Layer
+        A[Network Traffic] --> B[Packet Capture<br>Scapy]
     end
-    
-    subgraph "Detection Engine"
+
+    subgraph Detection_Engine
         B --> C[Threat Detection Logic]
         C --> D1[DDoS Detection]
         C --> D2[SYN Flood Detection]
@@ -46,41 +46,41 @@ flowchart TB
         D4 --> E
         D5 --> E
     end
-    
-    subgraph "Enrichment Services"
-        E --> F1[OSINT Feeds<br/>Feodo Tracker<br/>URLhaus]
-        E --> F2[Geolocation Service<br/>ipapi.co<br/>ip-api.com<br/>ipinfo.io]
+
+    subgraph Enrichment_Services
+        E --> F1[OSINT Feeds<br>Feodo Tracker, URLhaus]
+        E --> F2[Geolocation Services<br>ipapi, ip-api, ipinfo]
         F1 --> G[Threat Enrichment]
         F2 --> G
     end
-    
-    subgraph "Storage Layer"
-        G --> H1[CSV Threat Logs<br/>realtime_logs.csv]
-        G --> H2[Alert History<br/>alert_history.json]
-        G --> H3[Email Alerts<br/>SMTP]
+
+    subgraph Storage_Layer
+        G --> H1[CSV Threat Logs<br>realtime_logs.csv]
+        G --> H2[Alert History<br>alert_history.json]
+        G --> H3[Email Alerts<br>SMTP]
     end
-    
-    subgraph "Backend API"
-        H1 --> I[Flask REST API]
+
+    subgraph Backend_API
+        H1 --> I[Flask API]
         H2 --> I
-        I --> J1[/api/threats<br/>GET all threats]
-        I --> J2[/api/threats/stream<br/>SSE stream]
-        I --> J3[/api/geolocation/:ip<br/>IP lookup]
-        I --> J4[/api/alerts<br/>Alert history]
-        I --> J5[/api/health<br/>Health check]
+        I --> J1[GET all threats]
+        I --> J2[Threat stream SSE]
+        I --> J3[IP geolocation lookup]
+        I --> J4[Alert history]
+        I --> J5[Health check]
     end
-    
-    subgraph "Frontend Dashboard"
+
+    subgraph Frontend_Dashboard
         J1 --> K[React Dashboard]
         J2 --> K
         J3 --> K
         J4 --> K
-        K --> L1[Dashboard View<br/>Threat Analytics]
-        K --> L2[IP Analytics Page<br/>Detailed IP Analysis]
-        L1 --> M[Charts & Visualizations<br/>Recharts]
+        K --> L1[Threat Analytics View]
+        K --> L2[IP Analytics View]
+        L1 --> M[Charts and Visualizations<br>Recharts]
         L2 --> M
     end
-    
+
     style A fill:#4fc3f7
     style C fill:#ff5252
     style F1 fill:#ffb74d
@@ -88,6 +88,7 @@ flowchart TB
     style I fill:#4db6ac
     style K fill:#29b6f6
     style M fill:#f06292
+
 ```
 
 ### Data Flow Diagram
