@@ -29,11 +29,11 @@ A real-time network threat detection and analytics project that captures live tr
 ### System Architecture Diagram
 ```mermaid
 flowchart TB
-    subgraph Network["Network Layer"]
-        A[Network Traffic] --> B["Packet Capture (Scapy)"]
+    subgraph Network_Layer
+        A[Network Traffic] --> B[Packet Capture<br>Scapy]
     end
-    
-    subgraph Detection["Detection Engine"]
+
+    subgraph Detection_Engine
         B --> C[Threat Detection Logic]
         C --> D1[DDoS Detection]
         C --> D2[SYN Flood Detection]
@@ -46,41 +46,41 @@ flowchart TB
         D4 --> E
         D5 --> E
     end
-    
-    subgraph Enrichment["Enrichment Services"]
-        E --> F1["OSINT Feeds (Feodo Tracker, URLhaus)"]
-        E --> F2["Geolocation Service (ipapi.co, ip-api.com, ipinfo.io)"]
+
+    subgraph Enrichment_Services
+        E --> F1[OSINT Feeds<br>Feodo Tracker, URLhaus]
+        E --> F2[Geolocation Services<br>ipapi, ip-api, ipinfo]
         F1 --> G[Threat Enrichment]
         F2 --> G
     end
-    
-    subgraph Storage["Storage Layer"]
-        G --> H1["CSV Threat Logs (realtime_logs.csv)"]
-        G --> H2["Alert History (alert_history.json)"]
-        G --> H3["Email Alerts (SMTP)"]
+
+    subgraph Storage_Layer
+        G --> H1[CSV Threat Logs<br>realtime_logs.csv]
+        G --> H2[Alert History<br>alert_history.json]
+        G --> H3[Email Alerts<br>SMTP]
     end
-    
-    subgraph Backend["Backend API"]
-        H1 --> I[Flask REST API]
+
+    subgraph Backend_API
+        H1 --> I[Flask API]
         H2 --> I
-        I --> J1["/api/threats - GET all threats"]
-        I --> J2["/api/threats/stream - SSE stream"]
-        I --> J3["/api/geolocation/:ip - IP lookup"]
-        I --> J4["/api/alerts - Alert history"]
-        I --> J5["/api/health - Health check"]
+        I --> J1[GET all threats]
+        I --> J2[Threat stream SSE]
+        I --> J3[IP geolocation lookup]
+        I --> J4[Alert history]
+        I --> J5[Health check]
     end
-    
-    subgraph Frontend["Frontend Dashboard"]
+
+    subgraph Frontend_Dashboard
         J1 --> K[React Dashboard]
         J2 --> K
         J3 --> K
         J4 --> K
-        K --> L1["Dashboard View - Threat Analytics"]
-        K --> L2["IP Analytics Page - Detailed IP Analysis"]
-        L1 --> M["Charts & Visualizations (Recharts)"]
+        K --> L1[Threat Analytics View]
+        K --> L2[IP Analytics View]
+        L1 --> M[Charts and Visualizations<br>Recharts]
         L2 --> M
     end
-    
+
     style A fill:#4fc3f7
     style C fill:#ff5252
     style F1 fill:#ffb74d
@@ -88,115 +88,7 @@ flowchart TB
     style I fill:#4db6ac
     style K fill:#29b6f6
     style M fill:#f06292
-```
 
-### Data Flow Diagram
-```mermaid
-sequenceDiagram
-    participant Network as Network Traffic
-    participant Detector as Detection Engine
-    participant OSINT as OSINT Feeds
-    participant Geo as Geolocation Service
-    participant Storage as CSV/JSON Storage
-    participant API as Flask API
-    participant Frontend as React Dashboard
-    
-    Network->>Detector: Packet Capture
-    Detector->>Detector: Analyze Patterns
-    Detector->>OSINT: Check IP/Domain
-    OSINT-->>Detector: Threat Intel
-    Detector->>Geo: Lookup IP Location
-    Geo-->>Detector: Geolocation Data
-    Detector->>Storage: Write Threat Log
-    Detector->>Storage: Log Alert History
-    
-    Frontend->>API: GET /api/threats
-    API->>Storage: Read CSV
-    API->>Geo: Enrich Geolocation
-    Geo-->>API: Location Data
-    API-->>Frontend: JSON Response
-    
-    Frontend->>API: GET /api/threats/stream
-    API->>Frontend: SSE Stream Real-time
-    
-    Storage->>API: New Threat Detected
-    API->>Frontend: Push Update via SSE
-```
-
-### Component Architecture
-```mermaid
-graph LR
-    subgraph Backend["Backend Components"]
-        A["config.py - Configuration Manager"]
-        B["detector.py - Packet Detection"]
-        C["geolocation.py - IP Geolocation"]
-        D["alert_history.py - Alert Tracking"]
-        E["server.py - Flask API"]
-    end
-    
-    subgraph Frontend["Frontend Components"]
-        F["App.js - Router & Navigation"]
-        G["ThreatAnalytics.js - Main Dashboard"]
-        H["IPAnalytics.js - IP Analysis Page"]
-        I["App.css - Modern Styling"]
-    end
-    
-    A --> B
-    A --> C
-    A --> D
-    A --> E
-    B --> E
-    C --> E
-    D --> E
-    
-    F --> G
-    F --> H
-    G --> I
-    H --> I
-    E --> F
-```
-
-## 📁 Project Structure
-
-```
-c:\projects\codes\
-│
-├── backend/
-│   ├── api/
-│   │   └── server.py              # Flask REST API + SSE streaming
-│   ├── detectors/
-│   │   ├── detector.py            # Main packet detection engine
-│   │   ├── ddossample.py          # DDoS traffic generator (testing)
-│   │   ├── admincheck.py          # Network interface checker
-│   │   └── test.py                # Simple packet sniffer example
-│   ├── data/
-│   │   └── realtime_logs.csv      # Threat log file (CSV)
-│   ├── config.py                  # Configuration management system ✅
-│   ├── config.json                # Configuration file (auto-generated) ✅
-│   ├── geolocation.py             # IP geolocation service ✅
-│   ├── alert_history.py           # Alert history tracking ✅
-│   └── requirements.txt           # Python dependencies
-│
-├── frontend/
-│   └── threat-analytics-ui/
-│       ├── src/
-│       │   ├── App.js             # Main app with routing ✅
-│       │   ├── App.css            # Modern styling ✅
-│       │   ├── ThreatAnalytics.js # Main dashboard component ✅
-│       │   ├── IPAnalytics.js     # IP analytics page ✅
-│       │   └── index.js           # Entry point
-│       ├── public/
-│       └── package.json            # Node.js dependencies
-│
-├── data/
-│   └── alert_history.json         # Alert history storage ✅
-│
-├── README.md                       # This file
-├── ENHANCEMENTS.md                 # Detailed feature documentation ✅
-├── NEXT_STEPS.md                   # Roadmap and suggestions ✅
-├── START_SERVER.md                 # Server setup guide ✅
-├── GEOLOCATION_DEBUG.md            # Geolocation troubleshooting ✅
-└── LICENSE                         # MIT License
 ```
 
 ## ✨ Features
