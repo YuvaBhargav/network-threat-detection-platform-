@@ -20,6 +20,17 @@ A real-time cybersecurity project that captures live network traffic, detects ma
 ## Architecture
 Scapy Detectors → CSV Logs → Flask API (REST + SSE) → React UI
 
+```mermaid
+flowchart LR
+    A[Network Traffic] --> B[Scapy Detection Engine]
+    B -->|Detected Threats| C[CSV Log File]
+    C --> D[Flask Backend API]
+    D -->|REST API| E[React Dashboard]
+    D -->|Server-Sent Events| E
+    B -->|OSINT Feeds| F[Threat Intelligence]
+    B -->|Email Alerts| G[Security Alerts]
+```
+
 ## Setup Instructions
 
 1.Clone Repository
@@ -47,15 +58,3 @@ Do not expose to the public internet
 
 Email alerts require environment variables to be set
 
-Architecture Diagram
-
-```mermaid
-flowchart LR
-    A[Network Traffic] --> B[Scapy Detection Engine]
-    B -->|Detected Threats| C[CSV Log File]
-    C --> D[Flask Backend API]
-    D -->|REST API| E[React Dashboard]
-    D -->|Server-Sent Events| E
-    B -->|OSINT Feeds| F[Threat Intelligence]
-    B -->|Email Alerts| G[Security Alerts]
-```
