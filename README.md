@@ -33,20 +33,20 @@ flowchart LR
 
 ## Setup Instructions
 
-1.Clone Repository
-```bash
+1. Clone Repository
 git clone https://github.com/<your-username>/<repo-name>.git
-cd <repo-name>
+  cd <repo-name>
+  pip install -r backend/requirements.txt
 
 2. Backend API
-pip install -r requirements.txt
-python server.py
+   pip install -r requirements.txt
+   python server.py
 
 3. Detection Engine
 python network2.py
 
 4. Frontend
-cd threat-analytics-ui
+cd frontend/threat-analytics-ui
 npm install
 npm start
 
