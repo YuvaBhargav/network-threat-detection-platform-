@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ComposedChart, Area, Brush, ReferenceLine } from 'recharts';
 import './App.css';
 
 function ThreatAnalytics() {
+  const navigate = useNavigate();
   const [threats, setThreats] = useState([]);
   const [stats, setStats] = useState({
     total: 0,
@@ -29,6 +31,10 @@ function ThreatAnalytics() {
     SQLInjection: true,
     Total: true
   });
+  const [selectedThreat, setSelectedThreat] = useState(null);
+  const [showThreatModal, setShowThreatModal] = useState(false);
+  const [alertHistory, setAlertHistory] = useState([]);
+  const [showAlertHistory, setShowAlertHistory] = useState(false);
   const DDOS_THRESHOLD = 300;
   const PORTSCAN_THRESHOLD = 10;
 
@@ -252,6 +258,53 @@ function ThreatAnalytics() {
     URL.revokeObjectURL(url); // Clean up to avoid memory leaks
   }, [filteredThreats]);
 
+  // Export threats as JSON
+  const exportToJSON = useCallback(() => {
+    fetch('http://localhost:5000/api/threats/export?format=json')
+      .then(response => response.json())
+      .then(data => {
+        const jsonContent = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `threat-report-${new Date().toISOString().slice(0,10)}.json`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      })
+      .catch(error => {
+        console.error('Error exporting JSON:', error);
+        alert('Failed to export JSON. Please try again.');
+      });
+  }, []);
+
+  // Fetch alert history
+  const fetchAlertHistory = useCallback(() => {
+    fetch('http://localhost:5000/api/alerts?limit=100')
+      .then(response => response.json())
+      .then(data => {
+        setAlertHistory(data);
+      })
+      .catch(error => {
+        console.error('Error fetching alert history:', error);
+      });
+  }, []);
+
+  // Open threat details modal
+  const openThreatDetails = useCallback((threat) => {
+    setSelectedThreat(threat);
+    setShowThreatModal(true);
+  }, []);
+
+  // Close threat details modal
+  const closeThreatModal = useCallback(() => {
+    setShowThreatModal(false);
+    setSelectedThreat(null);
+  }, []);
+
   // Colors for pie chart
   const COLORS = ['#ff5252', '#ffb74d', '#9575cd', '#4db6ac', '#f06292'];
   
@@ -260,31 +313,49 @@ function ThreatAnalytics() {
     setIsLoading(true);
     setError(null);
     
-    fetch('http://localhost:5000/api/threats')
+    fetch('http://localhost:5000/api/threats', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
       .then(response => {
         if (!response.ok) {
-          throw new Error(`HTTP error! Status: ${response.status}`);
+          return response.json().then(err => {
+            throw new Error(err.error || `HTTP error! Status: ${response.status}`);
+          }).catch(() => {
+            throw new Error(`HTTP error! Status: ${response.status}. Make sure the backend server is running on http://localhost:5000`);
+          });
         }
         return response.json();
       })
       .then(data => {
-        setThreats(data);
-        setStats(calculateStats(data));
-        setTimelineData(processTimelineData(data));
-        setLifetimeData(processLifetimeData(data));
+        // Handle both array and object responses
+        const threatsArray = Array.isArray(data) ? data : (data.threats || []);
+        setThreats(threatsArray);
+        setStats(calculateStats(threatsArray));
+        setTimelineData(processTimelineData(threatsArray));
+        setLifetimeData(processLifetimeData(threatsArray));
         setIsLoading(false);
       })
       .catch(error => {
         console.error('Error fetching threats:', error);
-        setError('Failed to load threat data. Please try again later.');
+        let errorMessage = 'Failed to load threat data. ';
+        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+          errorMessage += 'Cannot connect to backend server. Please make sure the Flask server is running on http://localhost:5000';
+        } else {
+          errorMessage += error.message || 'Please try again later.';
+        }
+        setError(errorMessage);
         setIsLoading(false);
       });
   }, [calculateStats, processTimelineData, processLifetimeData]);
   
-  // Fetch initial threats
+  // Fetch initial threats and alert history
   useEffect(() => {
     fetchThreats();
-  }, [fetchThreats]);
+    fetchAlertHistory();
+  }, [fetchThreats, fetchAlertHistory]);
 
   // Set up event source for real-time updates
   const sseRef = useRef(null);
@@ -357,9 +428,20 @@ function ThreatAnalytics() {
   if (error) {
     return (
       <div className="error-container">
-        <h2>Error</h2>
-        <p>{error}</p>
-        <button onClick={fetchThreats} className="retry-button">Retry</button>
+        <div className="error-content">
+          <h2>⚠️ Connection Error</h2>
+          <p>{error}</p>
+          <div className="error-help">
+            <h3>To fix this issue:</h3>
+            <ol>
+              <li>Make sure the backend Flask server is running</li>
+              <li>Open a terminal and navigate to: <code>backend/api</code></li>
+              <li>Run: <code>python server.py</code></li>
+              <li>The server should start on <code>http://localhost:5000</code></li>
+            </ol>
+          </div>
+          <button onClick={fetchThreats} className="retry-button">🔄 Retry Connection</button>
+        </div>
       </div>
     );
   }
@@ -537,10 +619,43 @@ function ThreatAnalytics() {
       <div className="threats-table">
         <div className="table-header">
           <h2>Recent Threats</h2>
-          <button onClick={exportToCSV} className="export-button">
-            📊 Export to CSV
-          </button>
+          <div className="header-actions">
+            <button onClick={() => setShowAlertHistory(!showAlertHistory)} className="export-button">
+              📋 {showAlertHistory ? 'Hide' : 'Show'} Alert History
+            </button>
+            <button onClick={exportToCSV} className="export-button">
+              📊 Export CSV
+            </button>
+            <button onClick={exportToJSON} className="export-button">
+              📄 Export JSON
+            </button>
+          </div>
         </div>
+        
+        {showAlertHistory && (
+          <div className="alert-history-panel">
+            <h3>Alert History</h3>
+            <div className="alert-list">
+              {alertHistory.length === 0 ? (
+                <p>No alerts yet</p>
+              ) : (
+                alertHistory.slice(0, 10).map((alert, idx) => (
+                  <div key={idx} className="alert-item">
+                    <span className="alert-time">{new Date(alert.timestamp).toLocaleString()}</span>
+                    <span className="alert-type">{alert.alert_type}</span>
+                    <span className="alert-ip">{alert.source_ip}</span>
+                    {alert.geolocation && (
+                      <span className="alert-location">
+                        {alert.geolocation.city}, {alert.geolocation.country}
+                      </span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <button onClick={fetchAlertHistory} className="refresh-button">Refresh</button>
+          </div>
+        )}
         <div className="table-container">
         {reversedFilteredThreats.length === 0 ? (
           <div className="no-threats">No matching threats</div>
@@ -557,7 +672,12 @@ function ThreatAnalytics() {
           </thead>
           <tbody>
             {paginatedThreats.map((threat, index) => (
-              <tr key={index} className={getThreatClass(threat.threatType)}>
+              <tr 
+                key={index} 
+                className={getThreatClass(threat.threatType)}
+                onClick={() => openThreatDetails(threat)}
+                style={{ cursor: 'pointer' }}
+              >
                 <td>{new Date(threat.timestamp).toLocaleString()}</td>
                 <td>
                   <span className={
@@ -567,7 +687,29 @@ function ThreatAnalytics() {
                   } />
                   {threat.threatType}
                 </td>
-                <td>{threat.sourceIP}</td>
+                <td>
+                  {threat.sourceIP && threat.sourceIP !== 'N/A' ? (
+                    <>
+                      <span 
+                        className="ip-link" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/analytics/ip/${encodeURIComponent(threat.sourceIP)}`);
+                        }}
+                        title="Click to view IP analytics"
+                      >
+                        {threat.sourceIP}
+                      </span>
+                      {threat.geolocation && (
+                        <span className="geo-badge" title={`${threat.geolocation.city || 'Unknown'}, ${threat.geolocation.country || 'Unknown'}`}>
+                          🌍 {threat.geolocation.country_code || threat.geolocation.country || 'Unknown'}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span>{threat.sourceIP || 'N/A'}</span>
+                  )}
+                </td>
                 <td>{threat.destinationIP}</td>
                 <td>{threat.ports}</td>
               </tr>
@@ -605,6 +747,72 @@ function ThreatAnalytics() {
         </div>
         </div>
       </div>
+
+      {/* Threat Details Modal */}
+      {showThreatModal && selectedThreat && (
+        <div className="modal-overlay" onClick={closeThreatModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Threat Details</h2>
+              <button className="modal-close" onClick={closeThreatModal}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="detail-row">
+                <span className="detail-label">Timestamp:</span>
+                <span className="detail-value">{new Date(selectedThreat.timestamp).toLocaleString()}</span>
+              </div>
+              <div className="detail-row">
+                <span className="detail-label">Threat Type:</span>
+                <span className={`detail-value ${getThreatClass(selectedThreat.threatType)}`}>
+                  {selectedThreat.threatType}
+                </span>
+              </div>
+              <div className="detail-row">
+                <span className="detail-label">Source IP:</span>
+                <span className="detail-value">{selectedThreat.sourceIP}</span>
+              </div>
+              <div className="detail-row">
+                <span className="detail-label">Destination IP:</span>
+                <span className="detail-value">{selectedThreat.destinationIP}</span>
+              </div>
+              <div className="detail-row">
+                <span className="detail-label">Ports:</span>
+                <span className="detail-value">{selectedThreat.ports}</span>
+              </div>
+              {selectedThreat.geolocation && (
+                <div className="detail-section">
+                  <h3>Geolocation Information</h3>
+                  <div className="detail-row">
+                    <span className="detail-label">Country:</span>
+                    <span className="detail-value">{selectedThreat.geolocation.country}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">City:</span>
+                    <span className="detail-value">{selectedThreat.geolocation.city}</span>
+                  </div>
+                  {selectedThreat.geolocation.lat && selectedThreat.geolocation.lon && (
+                    <div className="detail-row">
+                      <span className="detail-label">Coordinates:</span>
+                      <span className="detail-value">
+                        {selectedThreat.geolocation.lat.toFixed(4)}, {selectedThreat.geolocation.lon.toFixed(4)}
+                      </span>
+                    </div>
+                  )}
+                  {selectedThreat.geolocation.isp && (
+                    <div className="detail-row">
+                      <span className="detail-label">ISP:</span>
+                      <span className="detail-value">{selectedThreat.geolocation.isp}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button onClick={closeThreatModal} className="modal-button">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,18 +3,30 @@
 A real-time network threat detection and analytics project that captures live traffic, detects common attack patterns, enriches events using OSINT feeds, and visualizes threats on a web dashboard. Built as a learning-focused project to understand detection engineering, packet analysis, and streaming analytics.
 
 ## Features
-- Threat detection: DDoS, SYN flood (ratio-based), port scanning, SQL Injection, XSS
-- OSINT enrichment: Feodo Tracker (IPs), URLhaus (domains)
-- Real-time streaming: Server-Sent Events (SSE)
-- Dashboard: counters, time-series trends, distribution charts, filtering, sorting, pagination
-- Dark/light theme toggle
-- Email alerts with throttling
+- **Threat Detection**: DDoS, SYN flood (ratio-based), port scanning, SQL Injection, XSS
+- **OSINT Enrichment**: Feodo Tracker (IPs), URLhaus (domains)
+- **IP Geolocation**: Multi-provider geolocation service with automatic fallback
+- **Real-time Streaming**: Server-Sent Events (SSE) for live threat updates
+- **Modern Dashboard**: Eye-catching UI with gradients, animations, and glassmorphism effects
+- **IP Analytics Page**: Dedicated page for detailed IP threat analysis with charts and statistics
+- **Advanced Features**: 
+  - Threat timeline visualization (24h, 7d, 30d)
+  - Threat distribution charts
+  - Filtering, sorting, and pagination
+  - CSV and JSON export
+  - Alert history tracking
+  - Threat details modal with geolocation
+- **Configuration System**: Centralized JSON-based configuration
+- **Dark/Light Theme**: Toggle between themes
+- **Email Alerts**: Configurable email alerts with throttling
 
 ## Tech Stack
-- Detection: Python, Scapy, regex patterns, OSINT feeds
-- Backend: Flask, Flask-CORS, pandas, numpy, SSE
-- Frontend: React, Recharts
-- Storage: CSV log (simple, learning-oriented)
+- **Detection**: Python, Scapy, regex patterns, OSINT feeds
+- **Backend**: Flask, Flask-CORS, pandas, numpy, SSE, requests
+- **Frontend**: React 19, React Router, Recharts
+- **Geolocation**: ipapi.co, ip-api.com, ipinfo.io (with fallback)
+- **Storage**: CSV log (simple, learning-oriented), JSON for alerts
+- **UI**: Modern CSS with gradients, animations, responsive design
 
 ## Architecture
 ```mermaid
