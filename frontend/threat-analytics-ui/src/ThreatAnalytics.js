@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ComposedChart, Area, Brush, ReferenceLine } from 'recharts';
 import './App.css';
+import ChatPanel from './components/ChatPanel';
 
 function ThreatAnalytics() {
   const navigate = useNavigate();
@@ -778,6 +779,10 @@ function ThreatAnalytics() {
           </div>
         </div>
         </div>
+      </div>
+
+      <div className="chat-container">
+        <ChatPanel />
       </div>
 
       {/* Threat Details Modal */}

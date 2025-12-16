@@ -18,6 +18,8 @@ from config import get_config
 from geolocation import get_geolocation_service
 from alert_history import get_alert_history
 from db import get_db, get_db_path, get_stat, set_stat
+from llm.ollama import generate_response
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app)
@@ -217,6 +219,88 @@ def health():
         "dbFileSize": db_size,
         "packetsProcessed": packets
     })
+
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        message = body.get("message")
+        if not isinstance(message, str) or not message.strip():
+            return jsonify({"error": "Invalid message"}), 400
+        conn = get_db()
+        since = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute("SELECT COUNT(*) AS c FROM threats WHERE timestamp >= ?", (since,))
+        total_24h = cur.fetchone()["c"]
+        cur = conn.execute("SELECT COUNT(*) AS c FROM threats WHERE timestamp >= ? AND threat_type LIKE '%DDoS%'", (since,))
+        ddos = cur.fetchone()["c"]
+        cur = conn.execute("SELECT COUNT(*) AS c FROM threats WHERE timestamp >= ? AND threat_type LIKE '%Port Scan%'", (since,))
+        portscan = cur.fetchone()["c"]
+        cur = conn.execute("SELECT source_ip, COUNT(*) AS c FROM threats WHERE timestamp >= ? AND source_ip IS NOT NULL GROUP BY source_ip ORDER BY c DESC LIMIT 5", (since,))
+        rows = cur.fetchall()
+        top_ips = [r["source_ip"] for r in rows if r["source_ip"]]
+        cur = conn.execute("SELECT timestamp, threat_type, source_ip, destination_ip, ports, meta FROM threats WHERE timestamp >= ?", (since,))
+        recent = cur.fetchall()
+        import json as _json
+        from datetime import datetime as _dt
+        hourly = {}
+        for r in recent:
+            try:
+                t = _dt.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                try:
+                    t = _dt.fromisoformat(r["timestamp"])
+                except Exception:
+                    continue
+            h = t.strftime("%Y-%m-%d %H")
+            hourly[h] = hourly.get(h, 0) + 1
+        keys = sorted(hourly.keys())
+        last6 = keys[-6:] if len(keys) >= 6 else keys
+        prev6 = keys[-12:-6] if len(keys) >= 12 else []
+        avg_last6 = (sum(hourly[k] for k in last6) / len(last6)) if last6 else 0
+        avg_prev6 = (sum(hourly[k] for k in prev6) / len(prev6)) if prev6 else 0
+        trend = "increasing" if avg_last6 > avg_prev6 else ("decreasing" if avg_last6 < avg_prev6 else "stable")
+        cur = conn.execute("SELECT ports, COUNT(*) AS c FROM threats WHERE timestamp >= ? AND ports IS NOT NULL GROUP BY ports ORDER BY c DESC LIMIT 5", (since,))
+        pr = cur.fetchall()
+        top_ports = [str(p["ports"]) for p in pr]
+        cur = conn.execute("SELECT meta FROM threats WHERE timestamp >= ? AND threat_type LIKE '%SYN Flood%' LIMIT 50", (since,))
+        syn_rows = cur.fetchall()
+        ratios = []
+        for sr in syn_rows:
+            try:
+                m = _json.loads(sr["meta"]) if sr["meta"] else None
+                sc = int(m.get("syn_count", 0)) if m else 0
+                ac = int(m.get("ack_count", 0)) if m else 0
+                r = (ac / sc) if sc > 0 else None
+                if r is not None:
+                    ratios.append(r)
+            except Exception:
+                continue
+        avg_syn_ack_ratio = round(sum(ratios) / len(ratios), 3) if ratios else None
+        prompt = (
+            "You are a security analyst assistant.\n\n"
+            "Answer the user's question first in 2-4 sentences, friendly and focused.\n"
+            "Then provide a short analysis with bullet points.\n\n"
+            "Context:\n"
+            f"- Total threats last 24h: {total_24h}\n"
+            f"- DDoS events: {ddos}\n"
+            f"- Port scans: {portscan}\n"
+            f"- Top source IPs: {', '.join(top_ips) if top_ips else 'None'}\n"
+            f"- Top ports: {', '.join(top_ports) if top_ports else 'None'}\n"
+            f"- Hourly trend (last 6h vs previous 6h): {trend}\n"
+            f"- Avg SYN/ACK ratio (recent): {avg_syn_ack_ratio if avg_syn_ack_ratio is not None else 'N/A'}\n\n"
+            "Rules:\n"
+            "- Do not invent data\n"
+            "- If unsure, say so\n"
+            "- Be concise and factual\n"
+            "- Use short bullets for insights\n\n"
+            "User question:\n"
+            f"{message}\n"
+            "Provide a precise answer and relevant insights only."
+        )
+        reply = generate_response(prompt) or ""
+        return jsonify({"reply": reply})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/geolocation/<ip_address>', methods=['GET'])
 def get_geolocation(ip_address):
