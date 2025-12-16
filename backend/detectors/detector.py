@@ -6,7 +6,7 @@ import smtplib
 import datetime
 import requests
 import re
-import csv
+import json
 from collections import defaultdict
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -23,6 +23,7 @@ sys.path.insert(0, BASE_DIR)
 from config import get_config, get_network_interface, get_alert_email_config
 from geolocation import get_geolocation_service
 from alert_history import get_alert_history
+from db import get_db
 
 # Load configuration
 config = get_config()
@@ -47,16 +48,6 @@ TIME_WINDOW = detection_config["time_window_seconds"]
 
 DATA_DIR = os.path.join(BASE_DIR, config["storage"]["log_file"].split("/")[0])
 LOG_FILE = os.path.join(BASE_DIR, config["storage"]["log_file"])
-
-os.makedirs(DATA_DIR, exist_ok=True)
-
-if not os.path.exists(LOG_FILE):
-    with open(LOG_FILE, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "Timestamp", "Threat Type",
-            "Source IP", "Destination IP", "Ports"
-        ])
 
 
 
@@ -196,13 +187,53 @@ Time: {datetime.datetime.now()}{geo_info}
 
 
 
-def log_to_csv(threat, src_ip, dst_ip, ports):
-    with open(LOG_FILE, "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            threat, src_ip, dst_ip, ports
-        ])
+def extract_meta_from_packet(packet, src_ip=None, dst_ip=None, port=None):
+    meta = {}
+    try:
+        if packet.haslayer(IP):
+            meta["ttl"] = int(packet[IP].ttl)
+            meta["len"] = int(packet[IP].len) if hasattr(packet[IP], "len") else None
+        if packet.haslayer(TCP):
+            flags = packet[TCP].flags
+            try:
+                meta["tcp_flags"] = int(flags)
+            except Exception:
+                meta["tcp_flags"] = str(flags)
+            meta["protocol"] = "TCP"
+        elif packet.haslayer(UDP):
+            meta["protocol"] = "UDP"
+        if packet.haslayer(Raw):
+            try:
+                meta["payload_len"] = len(packet[Raw].load)
+            except Exception:
+                pass
+        if packet.haslayer(HTTPRequest):
+            try:
+                meta["http_host"] = packet[HTTPRequest].Host.decode() if hasattr(packet[HTTPRequest].Host, "decode") else packet[HTTPRequest].Host
+                meta["http_path"] = packet[HTTPRequest].Path.decode() if hasattr(packet[HTTPRequest].Path, "decode") else packet[HTTPRequest].Path
+                meta["http_method"] = packet[HTTPRequest].Method.decode() if hasattr(packet[HTTPRequest].Method, "decode") else packet[HTTPRequest].Method
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if src_ip is not None:
+        meta["src_ip"] = src_ip
+    if dst_ip is not None:
+        meta["dst_ip"] = dst_ip
+    if port is not None:
+        meta["port"] = port
+    return meta
+
+def log_threat_to_db(threat, src_ip, dst_ip, ports, meta=None):
+    conn = get_db()
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    pr = json.dumps(ports) if isinstance(ports, (list, dict)) else str(ports)
+    mj = json.dumps(meta) if isinstance(meta, dict) else (meta if meta is not None else None)
+    conn.execute(
+        "INSERT INTO threats (timestamp, threat_type, source_ip, destination_ip, ports, meta) VALUES (?, ?, ?, ?, ?, ?)",
+        (ts, threat, src_ip, dst_ip, pr, mj)
+    )
+    conn.commit()
 
 
 
@@ -221,7 +252,7 @@ def detect_ddos(ip, port):
             f"High traffic on port {port}",
             ip, "DDoS", destination_ip="N/A", ports=port
         )
-        log_to_csv("Possible DDoS", ip, "N/A", port)
+        log_threat_to_db("Possible DDoS", ip, "N/A", port, meta={"window_count": len(ip_request_count[ip][port])})
         ip_request_count[ip][port].clear()
 
 def detect_port_scan(ip, port):
@@ -243,7 +274,7 @@ def detect_port_scan(ip, port):
             f"Multiple ports accessed: {unique_ports}",
             ip, "Port Scan", destination_ip="N/A", ports=list(unique_ports)
         )
-        log_to_csv("Port Scanning", ip, "N/A", list(unique_ports))
+        log_threat_to_db("Port Scanning", ip, "N/A", list(unique_ports), meta={"unique_ports": list(unique_ports), "total_events": total, "ratio": ratio})
         ip_ports_accessed[ip].clear()
 
 def detect_web_attacks(packet):
@@ -268,13 +299,17 @@ def detect_web_attacks(packet):
     if len(sql_injection_attempts[ip]) >= SQL_INJECTION_THRESHOLD:
         send_alert("Repeated SQL patterns detected", ip, "SQL Injection", 
                    destination_ip="Web Server", ports="HTTP")
-        log_to_csv("SQL Injection", ip, "Web Server", "HTTP")
+        meta = extract_meta_from_packet(packet, ip, "Web Server", "HTTP")
+        meta["attack"] = "SQLi"
+        log_threat_to_db("SQL Injection", ip, "Web Server", "HTTP", meta=meta)
         sql_injection_attempts[ip].clear()
 
     if len(xss_attempts[ip]) >= XSS_THRESHOLD:
         send_alert("Repeated XSS patterns detected", ip, "XSS",
                    destination_ip="Web Server", ports="HTTP")
-        log_to_csv("XSS Attack", ip, "Web Server", "HTTP")
+        meta = extract_meta_from_packet(packet, ip, "Web Server", "HTTP")
+        meta["attack"] = "XSS"
+        log_threat_to_db("XSS Attack", ip, "Web Server", "HTTP", meta=meta)
         xss_attempts[ip].clear()
     
     host = None
@@ -287,7 +322,7 @@ def detect_web_attacks(packet):
     if host and host in MALICIOUS_DOMAINS:
         send_alert("OSINT-listed domain detected", ip, "OSINT-Domain",
                    destination_ip=host, ports="HTTP")
-        log_to_csv("Malicious Domain (OSINT)", ip, host, "HTTP")
+        log_threat_to_db("Malicious Domain (OSINT)", ip, host, "HTTP", meta={"domain": host})
 
 def detect_threat(packet):
     if not packet.haslayer(IP):
@@ -305,7 +340,7 @@ def detect_threat(packet):
     if src_ip in MALICIOUS_IPS:
         send_alert("OSINT-listed IP detected", src_ip, "OSINT",
                    destination_ip=dst_ip, ports=port)
-        log_to_csv("Malicious IP (OSINT)", src_ip, dst_ip, port)
+        log_threat_to_db("Malicious IP (OSINT)", src_ip, dst_ip, port, meta={"osint": True})
 
     detect_ddos(src_ip, port)
     detect_port_scan(src_ip, port)
@@ -336,9 +371,30 @@ def detect_threat(packet):
         if syn_count > SYN_FLOOD_THRESHOLD and ratio < SYN_ACK_RATIO_THRESHOLD:
             send_alert("SYN flood suspected", src_ip, "SYN Flood",
                        destination_ip=dst_ip, ports=port)
-            log_to_csv("SYN Flood", src_ip, dst_ip, port)
+            meta = {"syn_count": syn_count, "ack_count": ack_count, "ratio": ratio}
+            log_threat_to_db("SYN Flood", src_ip, dst_ip, port, meta=meta)
             syn_events[src_ip].clear()
             ack_events[src_ip].clear()
+
+    global PACKET_COUNT
+    PACKET_COUNT += 1
+    if PACKET_COUNT - _last_flushed >= FLUSH_INTERVAL:
+        _flush_packet_count()
+
+PACKET_COUNT = 0
+FLUSH_INTERVAL = 100
+_last_flushed = 0
+
+def _flush_packet_count():
+    global _last_flushed
+    from db import set_stat, get_stat
+    try:
+        current = get_stat("packet_count", "0")
+        total = int(current or "0") + (PACKET_COUNT - _last_flushed)
+        set_stat("packet_count", total)
+        _last_flushed = PACKET_COUNT
+    except Exception:
+        pass
 
 
 

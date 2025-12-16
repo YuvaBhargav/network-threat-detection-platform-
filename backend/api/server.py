@@ -17,6 +17,7 @@ sys.path.insert(0, BASE_DIR)
 from config import get_config
 from geolocation import get_geolocation_service
 from alert_history import get_alert_history
+from db import get_db, get_db_path, get_stat, set_stat
 
 app = Flask(__name__)
 CORS(app)
@@ -28,21 +29,18 @@ LOG_FILE = os.path.join(BASE_DIR, config["storage"]["log_file"])
 # Thread lock for CSV operations
 csv_lock = threading.Lock()
 
-
-def get_threats_from_csv():
-    """Thread-safe CSV reading with geolocation enrichment"""
-    if not os.path.exists(LOG_FILE):
-        print(f"Warning: Log file not found at {LOG_FILE}")
-        return []
-    
-    with csv_lock:
-        try:
+def import_csv_to_db_if_needed():
+    try:
+        conn = get_db()
+        migrated = get_stat("csv_migrated", None)
+        if str(migrated).strip() == "1":
+            return
+        if not os.path.exists(LOG_FILE):
+            return
+        with csv_lock:
             df = pd.read_csv(LOG_FILE)
-            
-            # Check if CSV is empty
             if df.empty:
-                return []
-            
+                return
             df = df.rename(columns={
                 "Timestamp": "timestamp",
                 "Threat Type": "threatType", 
@@ -50,82 +48,78 @@ def get_threats_from_csv():
                 "Destination IP": "destinationIP",
                 "Ports": "ports"
             })
-
-            # Fill NaN values with empty strings or None
-            # Fill NaN values - use None for object columns, empty string for text columns
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    df[col] = df[col].fillna("")
-                else:
-                    df[col] = df[col].fillna("")
-            
-            # Enrich with geolocation data (non-blocking, skip on error)
-            try:
-                geo_service = get_geolocation_service()
-                if geo_service and geo_service.enabled:
-                    print(f"🌍 Geolocation enabled, enriching {len(df)} threats...")
-                    geolocations = {}
-                    unique_ips = [str(ip).strip() for ip in df["sourceIP"].unique() 
-                                 if ip and str(ip).strip() not in ["N/A", "nan", "", "None"] and pd.notna(ip)]
-                    
-                    print(f"📊 Found {len(unique_ips)} unique IPs to lookup")
-                    # Limit geolocation lookups to prevent timeouts (increase limit for better coverage)
-                    for ip in unique_ips[:100]:  # Increased limit
-                        try:
-                            geo = geo_service.get_location(ip)
-                            if geo:
-                                geolocations[ip] = geo
-                        except Exception as geo_error:
-                            print(f"⚠️ Geolocation lookup failed for {ip}: {geo_error}")
-                            import traceback
-                            traceback.print_exc()
-                            continue
-                    
-                    print(f"✅ Geolocation data retrieved for {len(geolocations)} IPs")
-                    # Add geolocation column
-                    df["geolocation"] = df["sourceIP"].map(geolocations)
-                    # Fill NaN geolocation values with None (which will be converted to null in JSON)
-                    df["geolocation"] = df["geolocation"].fillna(None)
-                else:
-                    print("⚠️ Geolocation service disabled or unavailable")
-            except Exception as geo_err:
-                print(f"❌ Geolocation enrichment skipped: {geo_err}")
-                import traceback
-                traceback.print_exc()
-                # Continue without geolocation data
-            
-            # Replace any remaining NaN/NaT values with None before converting to dict
-            df = df.replace({np.nan: None, pd.NaT: None})
-            
-            # Convert to dict
             records = df.to_dict('records')
-            
-            # Clean up any remaining NaN values that might have slipped through
-            def clean_nan(obj):
-                if isinstance(obj, dict):
-                    return {k: clean_nan(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [clean_nan(item) for item in obj]
-                elif isinstance(obj, (np.integer, np.floating)):
-                    if pd.isna(obj) or np.isinf(obj):
-                        return None
-                    return float(obj) if isinstance(obj, np.floating) else int(obj)
-                elif isinstance(obj, float):
-                    if pd.isna(obj) or np.isinf(obj) or str(obj).lower() == 'nan':
-                        return None
-                elif pd.isna(obj) if hasattr(pd, 'isna') else (obj != obj):
-                    return None
-                elif isinstance(obj, str) and obj.lower() in ['nan', 'nat', 'none', '']:
-                    return None if obj.lower() in ['nan', 'nat', 'none'] else obj
-                return obj
-            
-            cleaned_records = [clean_nan(record) for record in records]
-            return cleaned_records
-        except Exception as e:
-            print(f"Error reading CSV: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
+            for rec in records:
+                ts = rec.get("timestamp")
+                tt = rec.get("threatType")
+                sip = rec.get("sourceIP")
+                dip = rec.get("destinationIP")
+                ports = rec.get("ports")
+                try:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO threats (timestamp, threat_type, source_ip, destination_ip, ports, meta) VALUES (?, ?, ?, ?, ?, ?)",
+                        (ts, tt, str(sip) if sip is not None else None, str(dip) if dip is not None else None, str(ports) if ports is not None else None, None)
+                    )
+                except Exception:
+                    pass
+            conn.commit()
+            print(f"✅ Migrated {len(records)} rows from CSV to DB at {get_db_path()}")
+            try:
+                set_stat("csv_migrated", 1)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ CSV to DB migration failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def get_threats_from_db():
+    try:
+        import_csv_to_db_if_needed()
+        conn = get_db()
+        cur = conn.execute("SELECT id, timestamp, threat_type, source_ip, destination_ip, ports FROM threats ORDER BY id ASC")
+        rows = cur.fetchall()
+        records = []
+        for r in rows:
+            meta_obj = None
+            try:
+                meta_obj = json.loads(r["meta"]) if r["meta"] else None
+            except Exception:
+                meta_obj = None
+            records.append({
+                "timestamp": r["timestamp"],
+                "threatType": r["threat_type"],
+                "sourceIP": r["source_ip"],
+                "destinationIP": r["destination_ip"],
+                "ports": r["ports"],
+                "meta": meta_obj
+            })
+        try:
+            geo_service = get_geolocation_service()
+            if geo_service and geo_service.enabled:
+                geolocations = {}
+                unique_ips = [str(item["sourceIP"]).strip() for item in records if item["sourceIP"] and str(item["sourceIP"]).strip() not in ["N/A", "nan", "", "None"]]
+                for ip in list(dict.fromkeys(unique_ips))[:100]:
+                    try:
+                        geo = geo_service.get_location(ip)
+                        if geo:
+                            geolocations[ip] = geo
+                    except Exception:
+                        continue
+                for item in records:
+                    ip = item["sourceIP"]
+                    item["geolocation"] = geolocations.get(ip)
+            else:
+                pass
+        except Exception:
+            pass
+        return records
+    except Exception as e:
+        print(f"Error reading DB: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 class NpEncoder(json.JSONEncoder):
@@ -148,7 +142,7 @@ class NpEncoder(json.JSONEncoder):
 @app.route('/api/threats', methods=['GET'])
 def get_threats():
     try:
-        threats = get_threats_from_csv()
+        threats = get_threats_from_db()
         # Use custom encoder to handle NaN values properly
         response = app.response_class(
             response=json.dumps(threats, cls=NpEncoder),
@@ -165,18 +159,32 @@ def get_threats():
 @app.route('/api/threats/stream', methods=['GET'])
 def stream_threats():
     def event_stream():
-        last_size = 0
+        last_id = 0
         last_heartbeat = time.time()
         while True:
-            current_size = os.path.getsize(LOG_FILE) if os.path.exists(LOG_FILE) else 0
-            if current_size > last_size:
-                threats = get_threats_from_csv()
-                if threats:
-                    
-                    yield f"data: {json.dumps(threats[-1], cls=NpEncoder)}\n\n"
-                last_size = current_size
+            try:
+                conn = get_db()
+                cur = conn.execute("SELECT MAX(id) AS max_id FROM threats")
+                row = cur.fetchone()
+                current_max = row["max_id"] or 0
+                if current_max > last_id:
+                    cur2 = conn.execute("SELECT timestamp, threat_type, source_ip, destination_ip, ports, meta FROM threats WHERE id = ?", (current_max,))
+                    r = cur2.fetchone()
+                    if r:
+                        item = {
+                            "timestamp": r["timestamp"],
+                            "threatType": r["threat_type"],
+                            "sourceIP": r["source_ip"],
+                            "destinationIP": r["destination_ip"],
+                            "ports": r["ports"],
+                            "meta": json.loads(r["meta"]) if r["meta"] else None
+                        }
+                        yield f"data: {json.dumps(item, cls=NpEncoder)}\n\n"
+                    last_id = current_max
+            except Exception:
+                pass
             now = time.time()
-            if now - last_heartbeat > 15:
+            if now - last_heartbeat > 10:
                
                 yield ": keepalive\n\n"
                 last_heartbeat = now
@@ -192,10 +200,22 @@ def stream_threats():
 def health():
     exists = os.path.exists(LOG_FILE)
     size = os.path.getsize(LOG_FILE) if exists else 0
+    db_path = get_db_path()
+    db_exists = os.path.exists(db_path)
+    db_size = os.path.getsize(db_path) if db_exists else 0
+    packets = None
+    try:
+        val = get_stat("packet_count", None)
+        packets = int(val) if val is not None else None
+    except Exception:
+        packets = None
     return jsonify({
         "status": "ok",
         "logFileExists": exists,
-        "logFileSize": size
+        "logFileSize": size,
+        "dbFileExists": db_exists,
+        "dbFileSize": db_size,
+        "packetsProcessed": packets
     })
 
 @app.route('/api/geolocation/<ip_address>', methods=['GET'])
@@ -273,7 +293,7 @@ def get_alert_stats():
 def export_threats():
     """Export threats in JSON format"""
     format_type = request.args.get('format', 'json')
-    threats = get_threats_from_csv()
+    threats = get_threats_from_db()
     
     if format_type == 'json':
         return jsonify({

@@ -17,9 +17,10 @@ A real-time network threat detection and analytics project that captures live tr
 - ✅ **Threat Details Modal** - Expanded threat information with geolocation
 - ✅ **Advanced Filtering** - Search, filter by type, sorting, pagination
 - ✅ **Theme Support** - Dark/Light theme toggle
+- ✅ **SQLite Storage** - Threats, alerts, and stats persisted in a single DB
+- ✅ **Packet Metadata & Count** - TTL, flags, payload size; packets processed in health
 
 ### 🚧 Known Limitations
-- CSV storage (concurrency limitations - database migration recommended)
 - No authentication/authorization (planned for future)
 - Pattern-based detection may produce false positives
 - Static volumetric thresholds
@@ -55,14 +56,15 @@ flowchart TB
     end
 
     subgraph Storage_Layer
-        G --> H1[CSV Threat Logs<br>realtime_logs.csv]
-        G --> H2[Alert History<br>alert_history.json]
+        G --> H1[SQLite Database<br>backend/data/threats.db]
+        H1 --> H1a[Table: threats]
+        H1 --> H1b[Table: alerts]
+        H1 --> H1c[Table: stats]
         G --> H3[Email Alerts<br>SMTP]
     end
 
     subgraph Backend_API
         H1 --> I[Flask API]
-        H2 --> I
         I --> J1[GET all threats]
         I --> J2[Threat stream SSE]
         I --> J3[IP geolocation lookup]
@@ -158,8 +160,7 @@ flowchart TB
 - **Email**: SMTP for alerts
 
 ### Storage
-- **CSV**: Threat logs (realtime_logs.csv)
-- **JSON**: Alert history (alert_history.json) ✅
+- **SQLite**: Persistent storage (`backend/data/threats.db`) with `threats`, `alerts`, `stats`
 
 ## 🚀 Setup
 
@@ -411,7 +412,7 @@ curl http://localhost:5000/api/test-geolocation
 
 **No threats showing:**
 - Ensure detector is running
-- Check `backend/data/realtime_logs.csv` exists
+- Check `backend/data/threats.db` exists and has data
 - Verify network interface is correct
 
 See `START_SERVER.md` and `GEOLOCATION_DEBUG.md` for detailed troubleshooting.

@@ -35,6 +35,7 @@ function ThreatAnalytics() {
   const [showThreatModal, setShowThreatModal] = useState(false);
   const [alertHistory, setAlertHistory] = useState([]);
   const [showAlertHistory, setShowAlertHistory] = useState(false);
+  const [health, setHealth] = useState(null);
   const DDOS_THRESHOLD = 300;
   const PORTSCAN_THRESHOLD = 10;
 
@@ -293,6 +294,13 @@ function ThreatAnalytics() {
       });
   }, []);
 
+  const fetchHealth = useCallback(() => {
+    fetch('http://localhost:5000/api/health', { method: 'GET', mode: 'cors', cache: 'no-cache' })
+      .then(response => response.json())
+      .then(data => setHealth(data))
+      .catch(() => setHealth(null));
+  }, []);
+
   // Open threat details modal
   const openThreatDetails = useCallback((threat) => {
     setSelectedThreat(threat);
@@ -355,7 +363,22 @@ function ThreatAnalytics() {
   useEffect(() => {
     fetchThreats();
     fetchAlertHistory();
+    fetchHealth();
   }, [fetchThreats, fetchAlertHistory]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      fetchHealth();
+    }, 15000);
+    return () => clearInterval(t);
+  }, [fetchHealth]);
+
+  const formatSize = useCallback((size) => {
+    if (typeof size !== 'number') return '—';
+    if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${size} B`;
+  }, []);
 
   // Set up event source for real-time updates
   const sseRef = useRef(null);
@@ -456,6 +479,15 @@ function ThreatAnalytics() {
           </div>
           <div className={`live-badge ${isLive ? 'live' : 'idle'}`}>
             ● {isLive ? 'Live' : 'Idle'}
+          </div>
+          <div className={`live-badge ${(health && health.status === 'ok') ? 'live' : 'idle'}`}>
+            API
+          </div>
+          <div className="last-updated">
+            Log: {(health && health.logFileExists) ? 'Exists' : 'None'} · {formatSize(health?.logFileSize)}
+          </div>
+          <div className="last-updated">
+            Packets: {typeof health?.packetsProcessed === 'number' ? health.packetsProcessed : '—'}
           </div>
           <button onClick={fetchThreats} className="refresh-button">
             🔄 Refresh Data
@@ -779,6 +811,59 @@ function ThreatAnalytics() {
                 <span className="detail-label">Ports:</span>
                 <span className="detail-value">{selectedThreat.ports}</span>
               </div>
+              {selectedThreat.meta && (
+                <div className="detail-section">
+                  <h3>Packet Metadata</h3>
+                  {selectedThreat.meta.protocol && (
+                    <div className="detail-row">
+                      <span className="detail-label">Protocol:</span>
+                      <span className="detail-value">{selectedThreat.meta.protocol}</span>
+                    </div>
+                  )}
+                  {selectedThreat.meta.ttl != null && (
+                    <div className="detail-row">
+                      <span className="detail-label">TTL:</span>
+                      <span className="detail-value">{selectedThreat.meta.ttl}</span>
+                    </div>
+                  )}
+                  {selectedThreat.meta.len != null && (
+                    <div className="detail-row">
+                      <span className="detail-label">IP Length:</span>
+                      <span className="detail-value">{selectedThreat.meta.len}</span>
+                    </div>
+                  )}
+                  {selectedThreat.meta.payload_len != null && (
+                    <div className="detail-row">
+                      <span className="detail-label">Payload Length:</span>
+                      <span className="detail-value">{selectedThreat.meta.payload_len}</span>
+                    </div>
+                  )}
+                  {selectedThreat.meta.tcp_flags != null && (
+                    <div className="detail-row">
+                      <span className="detail-label">TCP Flags:</span>
+                      <span className="detail-value">{selectedThreat.meta.tcp_flags}</span>
+                    </div>
+                  )}
+                  {selectedThreat.meta.http_method && (
+                    <div className="detail-row">
+                      <span className="detail-label">HTTP Method:</span>
+                      <span className="detail-value">{selectedThreat.meta.http_method}</span>
+                    </div>
+                  )}
+                  {selectedThreat.meta.http_host && (
+                    <div className="detail-row">
+                      <span className="detail-label">HTTP Host:</span>
+                      <span className="detail-value">{selectedThreat.meta.http_host}</span>
+                    </div>
+                  )}
+                  {selectedThreat.meta.http_path && (
+                    <div className="detail-row">
+                      <span className="detail-label">HTTP Path:</span>
+                      <span className="detail-value">{selectedThreat.meta.http_path}</span>
+                    </div>
+                  )}
+                </div>
+              )}
               {selectedThreat.geolocation && (
                 <div className="detail-section">
                   <h3>Geolocation Information</h3>
