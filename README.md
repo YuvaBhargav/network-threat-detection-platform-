@@ -70,6 +70,7 @@ flowchart TB
         I --> J3[IP geolocation lookup]
         I --> J4[Alert history]
         I --> J5[Health check]
+        I --> J6[POST /api/chat]
     end
 
     subgraph Frontend_Dashboard
@@ -77,8 +78,10 @@ flowchart TB
         J2 --> K
         J3 --> K
         J4 --> K
+        J6 --> K
         K --> L1[Threat Analytics View]
         K --> L2[IP Analytics View]
+        K --> L3[Analyst Assistant Chat]
         L1 --> M[Charts and Visualizations<br>Recharts]
         L2 --> M
     end
@@ -92,6 +95,44 @@ flowchart TB
     style M fill:#f06292
 
 ```
+
+## 🤖 LLM Analyst Assistant
+
+- Local-only assistant using Ollama and `phi3`
+- Backend endpoint: `POST /api/chat` accepts `{ "message": "..." }`
+- Friendly, question-focused reply followed by short analyst bullet points
+- Prompt grounded with last 24h stats, top IPs, top ports, hourly trend, SYN/ACK ratio
+- Frontend component: `src/components/ChatPanel.jsx`
+- No changes to detection logic or existing endpoints
+- Requires Ollama running at `http://localhost:11434` with `phi3` pulled
+
+### LLM Chat Flow Diagram
+```mermaid
+flowchart LR
+    U[React ChatPanel] -->|POST /api/chat| B[Flask Chat Endpoint]
+    B --> D[(SQLite threats.db)]
+    B --> O[Ollama Local API<br>Model: phi3]
+    O --> B
+    B --> U
+```
+
+### Setup (Local)
+- Install Ollama and pull `phi3`
+  - `ollama pull phi3`
+  - `ollama run phi3`
+- Start backend on `http://localhost:5000`
+  - `python backend/api/server.py`
+- Start frontend
+  - `npm start` inside `frontend/threat-analytics-ui`
+
+### Testing
+- Validate chat endpoint:
+  - `curl -X POST http://localhost:5000/api/chat -H "Content-Type: application/json" -d "{\"message\":\"Summarize last 24h threats\"}"`
+- Validate dashboard chat:
+  - Open the dashboard, use the chat panel for:
+    - “Summarize last 24h threats”
+    - “Why are SYN floods increasing?”
+    - “Which IPs look most suspicious?”
 
 ## ✨ Features
 
