@@ -11,6 +11,7 @@ body {
   padding: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
 }
 
 /* Theme Variables */
@@ -314,6 +315,7 @@ body {
 .stat-card.portscan .stat-value { color: #ffb74d; }
 .stat-card.malicious .stat-value { color: #9575cd; }
 .stat-card.sqli .stat-value { color: #f06292; }
+.stat-card.xss .stat-value { color: #4db6ac; }
 .stat-card.recent .stat-value { color: #4db6ac; }
 
 /* Modern Buttons */
@@ -453,6 +455,116 @@ body {
   margin-top: 1.5rem;
 }
 
+.analysis-bot-panel {
+  gap: 1rem;
+}
+
+.analysis-bot-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.analysis-bot-header h2 {
+  margin: 0;
+}
+
+.analysis-bot-header p {
+  margin: 0.35rem 0 0;
+  color: #9fb3c8;
+  max-width: 680px;
+}
+
+.analysis-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
+}
+
+.analysis-card {
+  padding: 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(79, 195, 247, 0.12);
+  min-height: 150px;
+}
+
+.analysis-card h3 {
+  margin-top: 0;
+  margin-bottom: 0.85rem;
+  color: #4fc3f7;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.analysis-card p {
+  margin: 0;
+  color: #a7bdd2;
+}
+
+.analysis-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.65rem 0;
+  border-top: 1px solid rgba(79, 195, 247, 0.08);
+}
+
+.analysis-list-item:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.analysis-list-item strong {
+  color: #eaf7ff;
+}
+
+.analysis-list-item span {
+  color: #a7bdd2;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.analysis-summary-chip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: rgba(79, 195, 247, 0.08);
+  border: 1px solid rgba(79, 195, 247, 0.15);
+}
+
+.analysis-summary-chip span {
+  color: #9fb3c8;
+  font-size: 0.84rem;
+}
+
+.analysis-summary-chip strong {
+  color: #f4fbff;
+  font-size: 1.05rem;
+}
+
+.analysis-prompt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.analysis-messages {
+  min-height: 260px;
+  scroll-behavior: smooth;
+}
+
 .chat-panel {
   display: flex;
   flex-direction: column;
@@ -493,6 +605,7 @@ body {
   font-size: 0.95rem;
   line-height: 1.5;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  white-space: pre-wrap;
 }
 
 .chat-message.user .chat-bubble {
@@ -649,7 +762,7 @@ body {
 
 .styled-table tbody tr:hover {
   background: rgba(79, 195, 247, 0.1);
-  transform: scale(1.01);
+  transform: translateY(-1px);
 }
 
 .theme-light .styled-table tbody tr:hover {
@@ -686,6 +799,50 @@ body {
   border: 1px solid rgba(79, 195, 247, 0.3);
 }
 
+.role-badge,
+.direction-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.role-badge {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #d7e5f0;
+}
+
+.direction-badge {
+  border: 1px solid rgba(79, 195, 247, 0.25);
+}
+
+.direction-inbound {
+  background: rgba(255, 82, 82, 0.14);
+  color: #ff8a80;
+}
+
+.direction-outbound {
+  background: rgba(79, 195, 247, 0.14);
+  color: #4fc3f7;
+}
+
+.direction-lan,
+.direction-local {
+  background: rgba(255, 183, 77, 0.16);
+  color: #ffcc80;
+}
+
+.direction-external {
+  background: rgba(149, 117, 205, 0.16);
+  color: #d1c4e9;
+}
+
 /* Threat Type Colors */
 .threat-ddos {
   background: linear-gradient(135deg, rgba(255, 82, 82, 0.2), rgba(255, 82, 82, 0.1));
@@ -701,6 +858,10 @@ body {
 
 .threat-sqli {
   background: linear-gradient(135deg, rgba(240, 98, 146, 0.2), rgba(240, 98, 146, 0.1));
+}
+
+.threat-xss {
+  background: linear-gradient(135deg, rgba(77, 182, 172, 0.2), rgba(77, 182, 172, 0.1));
 }
 
 /* Severity Indicators */

@@ -5,6 +5,8 @@ import json
 import pandas as pd
 import os
 import sys
+import socket
+import ipaddress
 from pathlib import Path
 import numpy as np
 import threading
@@ -18,7 +20,6 @@ from config import get_config
 from geolocation import get_geolocation_service
 from alert_history import get_alert_history
 from db import get_db, get_db_path, get_stat, set_stat
-from llm.ollama import generate_response
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -30,6 +31,435 @@ LOG_FILE = os.path.join(BASE_DIR, config["storage"]["log_file"])
 
 # Thread lock for CSV operations
 csv_lock = threading.Lock()
+
+
+def get_local_ipv4_addresses():
+    addresses = {"127.0.0.1"}
+    try:
+        hostname = socket.gethostname()
+        for result in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            candidate = result[4][0]
+            if candidate:
+                addresses.add(candidate)
+    except Exception:
+        pass
+    return addresses
+
+
+LOCAL_IP_ADDRESSES = get_local_ipv4_addresses()
+THREAT_BASE_SCORES = {
+    "Possible DDoS": 90,
+    "SYN Flood": 88,
+    "Port Scanning": 62,
+    "Malicious IP (OSINT)": 82,
+    "Malicious Domain (OSINT)": 80,
+    "SQL Injection": 86,
+    "XSS Attack": 72,
+}
+
+
+def is_private_or_loopback(ip_value):
+    try:
+        address = ipaddress.ip_address(ip_value)
+        return address.is_private or address.is_loopback
+    except Exception:
+        return False
+
+
+def classify_direction(source_ip, destination_ip):
+    src_local = source_ip in LOCAL_IP_ADDRESSES
+    dst_local = destination_ip in LOCAL_IP_ADDRESSES
+
+    if src_local and not dst_local:
+        return "outbound"
+    if dst_local and not src_local:
+        return "inbound"
+    if src_local and dst_local:
+        return "local"
+    if is_private_or_loopback(source_ip) and is_private_or_loopback(destination_ip):
+        return "lan"
+    return "external"
+
+
+def normalize_threat_record(row):
+    meta_obj = None
+    try:
+        meta_obj = json.loads(row["meta"]) if row["meta"] else None
+    except Exception:
+        meta_obj = None
+
+    source_ip = row["source_ip"]
+    destination_ip = row["destination_ip"]
+    direction = classify_direction(source_ip, destination_ip)
+
+    return {
+        "id": row["id"] if "id" in row.keys() else None,
+        "timestamp": row["timestamp"],
+        "threatType": row["threat_type"],
+        "sourceIP": source_ip,
+        "destinationIP": destination_ip,
+        "ports": row["ports"],
+        "meta": meta_obj,
+        "direction": direction,
+        "sourceRole": "Local Host" if source_ip in LOCAL_IP_ADDRESSES else "Remote Host",
+        "destinationRole": "Local Host" if destination_ip in LOCAL_IP_ADDRESSES else "Remote Host",
+    }
+
+
+def parse_threat_timestamp(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+
+def compute_event_score(item):
+    score = THREAT_BASE_SCORES.get(item.get("threatType"), 45)
+    direction = item.get("direction")
+    if direction == "inbound":
+        score += 8
+    elif direction == "outbound":
+        score += 4
+
+    meta = item.get("meta") or {}
+    if "window_count" in meta:
+        score += min(12, int(meta.get("window_count", 0)) // 50)
+    if "attempt_count" in meta:
+        score += min(10, int(meta.get("attempt_count", 0)) * 2)
+    if "unique_sources" in meta:
+        score += min(10, int(meta.get("unique_sources", 0)))
+    if item.get("sourceRole") == "Remote Host" and direction == "inbound":
+        score += 5
+    return max(0, min(100, score))
+
+
+def build_event_explanation(item):
+    threat_type = item.get("threatType", "Unknown threat")
+    direction = item.get("direction", "external")
+    source_ip = item.get("sourceIP", "unknown")
+    destination_ip = item.get("destinationIP", "unknown")
+    service = item.get("ports", "unknown")
+    meta = item.get("meta") or {}
+
+    if threat_type == "Possible DDoS":
+        return (
+            f"{threat_type} was flagged because {destination_ip}:{service} received concentrated "
+            f"traffic pressure within the detection window. Sources={meta.get('unique_sources', 'n/a')}, "
+            f"events={meta.get('window_count', 'n/a')}."
+        )
+    if threat_type == "Port Scanning":
+        return (
+            f"{source_ip} touched many ports on {destination_ip} in a short burst, which matches "
+            f"reconnaissance behavior. Unique ports={len(meta.get('unique_ports', [])) if isinstance(meta.get('unique_ports'), list) else meta.get('unique_ports', 'n/a')}."
+        )
+    if threat_type == "SQL Injection":
+        return (
+            f"Repeated SQLi payloads were observed from {source_ip} toward {destination_ip}. "
+            f"Attempt count in window={meta.get('attempt_count', 'n/a')}."
+        )
+    if threat_type == "XSS Attack":
+        return (
+            f"Repeated XSS-like payloads were observed from {source_ip} toward {destination_ip}. "
+            f"Attempt count in window={meta.get('attempt_count', 'n/a')}."
+        )
+    if threat_type == "SYN Flood":
+        return (
+            f"SYN flood behavior was detected from {source_ip} toward {destination_ip}:{service}. "
+            f"SYN count={meta.get('syn_count', 'n/a')}, SYN-ACK count={meta.get('synack_count', 'n/a')}."
+        )
+    if "Malicious" in threat_type:
+        return (
+            f"{threat_type} means the event matched an external reputation feed. "
+            f"Traffic direction={direction}, source={source_ip}, target={destination_ip}."
+        )
+    return f"{threat_type} was recorded for {source_ip} -> {destination_ip} on {service} ({direction})."
+
+
+def build_incidents(recent_rows):
+    buckets = {}
+    for item in recent_rows:
+        key = (item["threatType"], item["sourceIP"], item["destinationIP"])
+        bucket = buckets.setdefault(
+            key,
+            {
+                "threatType": item["threatType"],
+                "sourceIP": item["sourceIP"],
+                "destinationIP": item["destinationIP"],
+                "direction": item.get("direction"),
+                "count": 0,
+                "maxScore": 0,
+                "latestTimestamp": item["timestamp"],
+                "services": set(),
+            },
+        )
+        bucket["count"] += 1
+        bucket["services"].add(str(item.get("ports", "unknown")))
+        bucket["maxScore"] = max(bucket["maxScore"], item.get("score", 0))
+        if str(item["timestamp"]) > str(bucket["latestTimestamp"]):
+            bucket["latestTimestamp"] = item["timestamp"]
+
+    incidents = []
+    for bucket in buckets.values():
+        incidents.append(
+            {
+                "threatType": bucket["threatType"],
+                "sourceIP": bucket["sourceIP"],
+                "destinationIP": bucket["destinationIP"],
+                "direction": bucket["direction"],
+                "count": bucket["count"],
+                "severityScore": bucket["maxScore"],
+                "latestTimestamp": bucket["latestTimestamp"],
+                "services": sorted(bucket["services"]),
+            }
+        )
+
+    incidents.sort(key=lambda item: (item["severityScore"], item["count"], item["latestTimestamp"]), reverse=True)
+    return incidents[:8]
+
+
+def build_trend_summary(recent_rows):
+    now = datetime.utcnow()
+    last_6h = now - timedelta(hours=6)
+    prev_6h = now - timedelta(hours=12)
+
+    current = [item for item in recent_rows if parse_threat_timestamp(item["timestamp"]) and parse_threat_timestamp(item["timestamp"]) >= last_6h]
+    previous = [
+        item
+        for item in recent_rows
+        if parse_threat_timestamp(item["timestamp"])
+        and prev_6h <= parse_threat_timestamp(item["timestamp"]) < last_6h
+    ]
+
+    current_count = len(current)
+    previous_count = len(previous)
+    delta = current_count - previous_count
+    direction = "stable"
+    if delta > 0:
+        direction = "up"
+    elif delta < 0:
+        direction = "down"
+
+    return {
+        "currentWindow": current_count,
+        "previousWindow": previous_count,
+        "delta": delta,
+        "direction": direction,
+        "dominantThreat": max(
+            {"none": 0, **{item["threatType"]: sum(1 for row in current if row["threatType"] == item["threatType"]) for item in current}}.items(),
+            key=lambda pair: pair[1],
+        )[0],
+    }
+
+
+def build_anomalies(recent_rows):
+    anomalies = []
+    if not recent_rows:
+        return anomalies
+
+    remote_inbound = [item for item in recent_rows if item.get("direction") == "inbound" and item.get("sourceRole") == "Remote Host"]
+    if remote_inbound:
+        top = max(remote_inbound, key=lambda item: item.get("score", 0))
+        anomalies.append(
+            {
+                "title": "High-risk inbound activity",
+                "detail": f"{top['sourceIP']} targeted {top['destinationIP']} with {top['threatType']} (score {top['score']}).",
+            }
+        )
+
+    outbound_web = [item for item in recent_rows if item.get("direction") == "outbound" and item["threatType"] in {"SQL Injection", "XSS Attack"}]
+    if outbound_web:
+        anomalies.append(
+            {
+                "title": "Outbound web attack traffic observed",
+                "detail": f"{len(outbound_web)} outbound web attack events were seen from the monitored host. Validate whether these were tests or unexpected local behavior.",
+            }
+        )
+
+    top_incident = build_incidents(recent_rows[:])[:1]
+    if top_incident:
+        incident = top_incident[0]
+        anomalies.append(
+            {
+                "title": "Most concentrated incident cluster",
+                "detail": f"{incident['threatType']} from {incident['sourceIP']} to {incident['destinationIP']} repeated {incident['count']} times across {', '.join(incident['services'])}.",
+            }
+        )
+
+    return anomalies[:4]
+
+
+def get_analysis_snapshot():
+    conn = get_db()
+    now = datetime.utcnow()
+    since = (now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    cur = conn.execute(
+        "SELECT timestamp, threat_type, source_ip, destination_ip, ports, meta "
+        "FROM threats ORDER BY id DESC LIMIT 500"
+    )
+    rows = cur.fetchall()
+    recent_rows = []
+    for row in rows:
+        parsed = parse_threat_timestamp(row["timestamp"])
+        if parsed and parsed >= now - timedelta(hours=24):
+            item = normalize_threat_record(row)
+            item["score"] = compute_event_score(item)
+            item["explanation"] = build_event_explanation(item)
+            recent_rows.append(item)
+
+    counts = {
+        "total_24h": len(recent_rows),
+        "ddos": sum(1 for item in recent_rows if item["threatType"] and "DDoS" in item["threatType"]),
+        "port_scan": sum(1 for item in recent_rows if item["threatType"] and "Port Scan" in item["threatType"]),
+        "sqli": sum(1 for item in recent_rows if item["threatType"] and "SQL Injection" in item["threatType"]),
+        "xss": sum(1 for item in recent_rows if item["threatType"] and "XSS" in item["threatType"]),
+        "osint": sum(1 for item in recent_rows if item["threatType"] and "Malicious" in item["threatType"]),
+        "inbound": sum(1 for item in recent_rows if item.get("direction") == "inbound"),
+        "outbound": sum(1 for item in recent_rows if item.get("direction") == "outbound"),
+    }
+
+    source_counts = {}
+    destination_counts = {}
+    for item in recent_rows:
+        source_counts[item["sourceIP"]] = source_counts.get(item["sourceIP"], 0) + 1
+        destination_counts[item["destinationIP"]] = destination_counts.get(item["destinationIP"], 0) + 1
+
+    top_sources = sorted(source_counts.items(), key=lambda pair: pair[1], reverse=True)[:5]
+    top_destinations = sorted(destination_counts.items(), key=lambda pair: pair[1], reverse=True)[:5]
+    newest = recent_rows[:8]
+    incidents = build_incidents(recent_rows)
+    trends = build_trend_summary(recent_rows)
+    anomalies = build_anomalies(recent_rows)
+    risk_score = 0
+    if recent_rows:
+        risk_score = min(
+            100,
+            int(
+                (sum(item["score"] for item in recent_rows[:25]) / max(1, min(len(recent_rows), 25))) * 0.7
+                + min(30, len(incidents) * 3)
+            ),
+        )
+
+    return {
+        "generated_at": now.isoformat(),
+        "counts": counts,
+        "top_sources": top_sources,
+        "top_destinations": top_destinations,
+        "newest": newest,
+        "incidents": incidents,
+        "trends": trends,
+        "anomalies": anomalies,
+        "riskScore": risk_score,
+    }
+
+
+def build_analysis_reply(message, snapshot):
+    text = (message or "").strip().lower()
+    counts = snapshot["counts"]
+    newest = snapshot["newest"]
+    top_sources = snapshot["top_sources"]
+    top_destinations = snapshot["top_destinations"]
+    incidents = snapshot.get("incidents", [])
+    anomalies = snapshot.get("anomalies", [])
+    trends = snapshot.get("trends", {})
+
+    summary_lines = [
+        f"Threats in the last 24h: {counts['total_24h']}",
+        f"DDoS: {counts['ddos']}, Port scans: {counts['port_scan']}, SQLi: {counts['sqli']}, XSS: {counts['xss']}, OSINT hits: {counts['osint']}",
+        f"Inbound vs outbound: {counts['inbound']} inbound, {counts['outbound']} outbound",
+        f"Current risk score: {snapshot.get('riskScore', 0)}/100",
+    ]
+
+    recommendation_lines = []
+    if counts["ddos"] > 0:
+        recommendation_lines.append("Review repeated DDoS targets and consider rate-limits or upstream filtering on the busiest service.")
+    if counts["port_scan"] > 0:
+        recommendation_lines.append("Port scan activity is present; validate exposed services and tighten allowlists on frequently probed ports.")
+    if counts["sqli"] > 0 or counts["xss"] > 0:
+        recommendation_lines.append("Web attack traffic is present; review WAF rules, input validation paths, and any public-facing app endpoints.")
+    if counts["outbound"] > counts["inbound"]:
+        recommendation_lines.append("Most detections are outbound from the monitored host, so validate whether these are testing actions versus suspicious local activity.")
+    if not recommendation_lines:
+        recommendation_lines.append("The last 24h looks relatively calm; keep watching for shifts in directionality and repeated sources.")
+
+    if any(keyword in text for keyword in ["top source", "who", "attacker", "source ip"]):
+        lines = ["Top source IPs in the last 24h:"]
+        if top_sources:
+            lines.extend([f"- {ip}: {count} events" for ip, count in top_sources])
+        else:
+            lines.append("- No recent sources recorded")
+        return "\n".join(lines)
+
+    if any(keyword in text for keyword in ["target", "destination", "victim"]):
+        lines = ["Most targeted destinations in the last 24h:"]
+        if top_destinations:
+            lines.extend([f"- {ip}: {count} events" for ip, count in top_destinations])
+        else:
+            lines.append("- No recent destinations recorded")
+        return "\n".join(lines)
+
+    if any(keyword in text for keyword in ["recommend", "fix", "next step", "improve", "mitigate"]):
+        return "Recommended next actions:\n" + "\n".join(f"- {line}" for line in recommendation_lines)
+
+    if any(keyword in text for keyword in ["trend", "spike", "change", "rising", "falling"]):
+        return (
+            "Trend summary:\n"
+            f"- Last 6h events: {trends.get('currentWindow', 0)}\n"
+            f"- Previous 6h events: {trends.get('previousWindow', 0)}\n"
+            f"- Direction: {trends.get('direction', 'stable')}\n"
+            f"- Dominant threat in current window: {trends.get('dominantThreat', 'none')}"
+        )
+
+    if any(keyword in text for keyword in ["anomaly", "weird", "suspicious", "odd"]):
+        if anomalies:
+            return "Anomaly highlights:\n" + "\n".join(f"- {item['title']}: {item['detail']}" for item in anomalies)
+        return "No standout anomalies were identified in the current 24h snapshot."
+
+    if any(keyword in text for keyword in ["incident", "cluster", "campaign"]):
+        if incidents:
+            return "Highest-priority incidents:\n" + "\n".join(
+                f"- {item['threatType']} from {item['sourceIP']} to {item['destinationIP']} | count={item['count']} | score={item['severityScore']}"
+                for item in incidents[:5]
+            )
+        return "No incident clusters were found."
+
+    if any(keyword in text for keyword in ["explain", "why this alert", "alert detail"]):
+        if newest:
+            item = newest[0]
+            return (
+                f"Latest alert explanation ({item['threatType']}):\n"
+                f"- Score: {item.get('score', 0)}/100\n"
+                f"- Direction: {item.get('direction', 'external')}\n"
+                f"- {item.get('explanation', 'No explanation available.')}"
+            )
+        return "There is no recent alert to explain."
+
+    if any(keyword in text for keyword in ["recent", "latest", "what happened", "timeline"]):
+        lines = ["Most recent detections:"]
+        if newest:
+            lines.extend([
+                f"- {item['timestamp']}: {item['threatType']} from {item['sourceIP']} to {item['destinationIP']} ({item.get('direction', 'external')}, score {item.get('score', 0)})"
+                for item in newest
+            ])
+        else:
+            lines.append("- No recent threats in the last 24h")
+        return "\n".join(lines)
+
+    return (
+        "Security analysis summary:\n"
+        + "\n".join(f"- {line}" for line in summary_lines)
+        + (
+            "\n\nKey anomalies:\n" + "\n".join(f"- {item['title']}: {item['detail']}" for item in anomalies)
+            if anomalies
+            else ""
+        )
+        + "\n\nRecommendations:\n"
+        + "\n".join(f"- {line}" for line in recommendation_lines)
+    )
 
 def import_csv_to_db_if_needed():
     try:
@@ -80,23 +510,12 @@ def get_threats_from_db():
     try:
         import_csv_to_db_if_needed()
         conn = get_db()
-        cur = conn.execute("SELECT id, timestamp, threat_type, source_ip, destination_ip, ports FROM threats ORDER BY id ASC")
+        cur = conn.execute(
+            "SELECT id, timestamp, threat_type, source_ip, destination_ip, ports, meta "
+            "FROM threats ORDER BY id DESC"
+        )
         rows = cur.fetchall()
-        records = []
-        for r in rows:
-            meta_obj = None
-            try:
-                meta_obj = json.loads(r["meta"]) if r["meta"] else None
-            except Exception:
-                meta_obj = None
-            records.append({
-                "timestamp": r["timestamp"],
-                "threatType": r["threat_type"],
-                "sourceIP": r["source_ip"],
-                "destinationIP": r["destination_ip"],
-                "ports": r["ports"],
-                "meta": meta_obj
-            })
+        records = [normalize_threat_record(r) for r in rows]
         try:
             geo_service = get_geolocation_service()
             if geo_service and geo_service.enabled:
@@ -173,14 +592,7 @@ def stream_threats():
                     cur2 = conn.execute("SELECT timestamp, threat_type, source_ip, destination_ip, ports, meta FROM threats WHERE id = ?", (current_max,))
                     r = cur2.fetchone()
                     if r:
-                        item = {
-                            "timestamp": r["timestamp"],
-                            "threatType": r["threat_type"],
-                            "sourceIP": r["source_ip"],
-                            "destinationIP": r["destination_ip"],
-                            "ports": r["ports"],
-                            "meta": json.loads(r["meta"]) if r["meta"] else None
-                        }
+                        item = normalize_threat_record(r)
                         yield f"data: {json.dumps(item, cls=NpEncoder)}\n\n"
                     last_id = current_max
             except Exception:
@@ -217,7 +629,8 @@ def health():
         "logFileSize": size,
         "dbFileExists": db_exists,
         "dbFileSize": db_size,
-        "packetsProcessed": packets
+        "packetsProcessed": packets,
+        "localIPs": sorted(LOCAL_IP_ADDRESSES),
     })
 
 @app.route('/api/chat', methods=['POST'])
@@ -227,78 +640,18 @@ def chat():
         message = body.get("message")
         if not isinstance(message, str) or not message.strip():
             return jsonify({"error": "Invalid message"}), 400
-        conn = get_db()
-        since = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-        cur = conn.execute("SELECT COUNT(*) AS c FROM threats WHERE timestamp >= ?", (since,))
-        total_24h = cur.fetchone()["c"]
-        cur = conn.execute("SELECT COUNT(*) AS c FROM threats WHERE timestamp >= ? AND threat_type LIKE '%DDoS%'", (since,))
-        ddos = cur.fetchone()["c"]
-        cur = conn.execute("SELECT COUNT(*) AS c FROM threats WHERE timestamp >= ? AND threat_type LIKE '%Port Scan%'", (since,))
-        portscan = cur.fetchone()["c"]
-        cur = conn.execute("SELECT source_ip, COUNT(*) AS c FROM threats WHERE timestamp >= ? AND source_ip IS NOT NULL GROUP BY source_ip ORDER BY c DESC LIMIT 5", (since,))
-        rows = cur.fetchall()
-        top_ips = [r["source_ip"] for r in rows if r["source_ip"]]
-        cur = conn.execute("SELECT timestamp, threat_type, source_ip, destination_ip, ports, meta FROM threats WHERE timestamp >= ?", (since,))
-        recent = cur.fetchall()
-        import json as _json
-        from datetime import datetime as _dt
-        hourly = {}
-        for r in recent:
-            try:
-                t = _dt.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S")
-            except Exception:
-                try:
-                    t = _dt.fromisoformat(r["timestamp"])
-                except Exception:
-                    continue
-            h = t.strftime("%Y-%m-%d %H")
-            hourly[h] = hourly.get(h, 0) + 1
-        keys = sorted(hourly.keys())
-        last6 = keys[-6:] if len(keys) >= 6 else keys
-        prev6 = keys[-12:-6] if len(keys) >= 12 else []
-        avg_last6 = (sum(hourly[k] for k in last6) / len(last6)) if last6 else 0
-        avg_prev6 = (sum(hourly[k] for k in prev6) / len(prev6)) if prev6 else 0
-        trend = "increasing" if avg_last6 > avg_prev6 else ("decreasing" if avg_last6 < avg_prev6 else "stable")
-        cur = conn.execute("SELECT ports, COUNT(*) AS c FROM threats WHERE timestamp >= ? AND ports IS NOT NULL GROUP BY ports ORDER BY c DESC LIMIT 5", (since,))
-        pr = cur.fetchall()
-        top_ports = [str(p["ports"]) for p in pr]
-        cur = conn.execute("SELECT meta FROM threats WHERE timestamp >= ? AND threat_type LIKE '%SYN Flood%' LIMIT 50", (since,))
-        syn_rows = cur.fetchall()
-        ratios = []
-        for sr in syn_rows:
-            try:
-                m = _json.loads(sr["meta"]) if sr["meta"] else None
-                sc = int(m.get("syn_count", 0)) if m else 0
-                ac = int(m.get("ack_count", 0)) if m else 0
-                r = (ac / sc) if sc > 0 else None
-                if r is not None:
-                    ratios.append(r)
-            except Exception:
-                continue
-        avg_syn_ack_ratio = round(sum(ratios) / len(ratios), 3) if ratios else None
-        prompt = (
-            "You are a security analyst assistant.\n\n"
-            "Answer the user's question first in 2-4 sentences, friendly and focused.\n"
-            "Then provide a short analysis with bullet points.\n\n"
-            "Context:\n"
-            f"- Total threats last 24h: {total_24h}\n"
-            f"- DDoS events: {ddos}\n"
-            f"- Port scans: {portscan}\n"
-            f"- Top source IPs: {', '.join(top_ips) if top_ips else 'None'}\n"
-            f"- Top ports: {', '.join(top_ports) if top_ports else 'None'}\n"
-            f"- Hourly trend (last 6h vs previous 6h): {trend}\n"
-            f"- Avg SYN/ACK ratio (recent): {avg_syn_ack_ratio if avg_syn_ack_ratio is not None else 'N/A'}\n\n"
-            "Rules:\n"
-            "- Do not invent data\n"
-            "- If unsure, say so\n"
-            "- Be concise and factual\n"
-            "- Use short bullets for insights\n\n"
-            "User question:\n"
-            f"{message}\n"
-            "Provide a precise answer and relevant insights only."
-        )
-        reply = generate_response(prompt) or ""
-        return jsonify({"reply": reply})
+        snapshot = get_analysis_snapshot()
+        reply = build_analysis_reply(message, snapshot)
+        return jsonify({"reply": reply, "snapshot": snapshot})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/analysis/summary', methods=['GET'])
+def analysis_summary():
+    try:
+        snapshot = get_analysis_snapshot()
+        return jsonify(snapshot)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

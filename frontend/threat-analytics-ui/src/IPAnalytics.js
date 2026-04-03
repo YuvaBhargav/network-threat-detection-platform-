@@ -2,9 +2,11 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  BarChart, Bar, PieChart, Pie, Cell, ComposedChart, Area 
+  BarChart, Bar, PieChart, Pie, Cell
 } from 'recharts';
 import './App.css';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 function IPAnalytics() {
   const { ip } = useParams();
@@ -76,7 +78,7 @@ function IPAnalytics() {
     setIsLoading(true);
     setError(null);
     
-    fetch('http://localhost:5000/api/threats', {
+    fetch(`${API_BASE_URL}/api/threats`, {
       method: 'GET',
       mode: 'cors',
       cache: 'no-cache'
@@ -100,7 +102,7 @@ function IPAnalytics() {
         console.error('Error fetching threats:', error);
         let errorMessage = 'Failed to load threat data. ';
         if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-          errorMessage += 'Cannot connect to backend server. Please make sure the Flask server is running on http://localhost:5000';
+          errorMessage += `Cannot connect to backend server. Please make sure the Flask server is running on ${API_BASE_URL}`;
         } else {
           errorMessage += error.message || 'Please try again later.';
         }
@@ -112,7 +114,7 @@ function IPAnalytics() {
   // Fetch IP geolocation if not in threat data
   useEffect(() => {
     if (ip && !ipStats?.geolocation) {
-      fetch(`http://localhost:5000/api/geolocation/${ip}`)
+      fetch(`${API_BASE_URL}/api/geolocation/${ip}`)
         .then(response => response.json())
         .then(data => {
           if (data && !data.error) {
@@ -142,9 +144,9 @@ function IPAnalytics() {
     return (
       <div className="error-container">
         <div className="error-content">
-          <h2>⚠️ Connection Error</h2>
+          <h2>Connection Error</h2>
           <p>{error}</p>
-          <button onClick={fetchThreats} className="retry-button">🔄 Retry Connection</button>
+          <button onClick={fetchThreats} className="retry-button">Retry Connection</button>
         </div>
       </div>
     );
@@ -164,7 +166,7 @@ function IPAnalytics() {
     return (
       <div className="dashboard-container ip-analytics-page">
         <div className="ip-analytics-header">
-          <button onClick={() => navigate('/')} className="back-button">← Back to Dashboard</button>
+          <button onClick={() => navigate('/')} className="back-button">Back to Dashboard</button>
           <h1>IP Analytics</h1>
         </div>
         <div className="chart-card">
@@ -202,7 +204,7 @@ function IPAnalytics() {
     return (
       <div className="dashboard-container">
         <div className="ip-analytics-header">
-          <button onClick={() => navigate('/')} className="back-button">← Back to Dashboard</button>
+          <button onClick={() => navigate('/')} className="back-button">Back to Dashboard</button>
           <h1>IP Analytics: {ip}</h1>
         </div>
         <div className="no-data-container">
@@ -218,13 +220,12 @@ function IPAnalytics() {
   return (
     <div className="dashboard-container ip-analytics-page">
       <div className="ip-analytics-header">
-        <button onClick={() => navigate('/')} className="back-button">← Back to Dashboard</button>
+        <button onClick={() => navigate('/')} className="back-button">Back to Dashboard</button>
         <div className="ip-header-content">
           <h1 className="ip-title">
             <span className="ip-badge">{ip}</span>
             {geoData && (
-              <span className="geo-info">
-                🌍 {geoData.city}, {geoData.country}
+              <span className="geo-info">                {geoData.city}, {geoData.country}
               </span>
             )}
           </h1>
@@ -254,28 +255,28 @@ function IPAnalytics() {
       {/* IP Stats Cards */}
       <div className="ip-stats-grid">
         <div className="ip-stat-card gradient-1">
-          <div className="stat-icon">📊</div>
+          <div className="stat-icon">Total</div>
           <div className="stat-info">
             <h3>Total Threats</h3>
             <p className="stat-value-large">{ipStats.totalThreats}</p>
           </div>
         </div>
         <div className="ip-stat-card gradient-2">
-          <div className="stat-icon">🎯</div>
+          <div className="stat-icon">Types</div>
           <div className="stat-info">
             <h3>Threat Types</h3>
             <p className="stat-value-large">{ipStats.threatTypes.length}</p>
           </div>
         </div>
         <div className="ip-stat-card gradient-3">
-          <div className="stat-icon">🔌</div>
+          <div className="stat-icon">Ports</div>
           <div className="stat-info">
             <h3>Ports Targeted</h3>
             <p className="stat-value-large">{ipStats.ports.length}</p>
           </div>
         </div>
         <div className="ip-stat-card gradient-4">
-          <div className="stat-icon">🌐</div>
+          <div className="stat-icon">Hosts</div>
           <div className="stat-info">
             <h3>Destinations</h3>
             <p className="stat-value-large">{ipStats.uniqueDestinations}</p>
@@ -286,7 +287,7 @@ function IPAnalytics() {
       {/* Geolocation Info */}
       {geoData && (
         <div className="geo-card">
-          <h2>📍 Geolocation Information</h2>
+          <h2>Geolocation Information</h2>
           <div className="geo-details">
             <div className="geo-item">
               <span className="geo-label">Country:</span>

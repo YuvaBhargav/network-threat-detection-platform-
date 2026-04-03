@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ComposedChart, Area, Brush, ReferenceLine } from 'recharts';
+import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ComposedChart, Area, Brush, ReferenceLine } from 'recharts';
 import './App.css';
-import ChatPanel from './components/ChatPanel';
+import AnalysisBot from './components/AnalysisBot';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 function ThreatAnalytics() {
   const navigate = useNavigate();
@@ -13,12 +15,14 @@ function ThreatAnalytics() {
     portScanCount: 0,
     maliciousIpCount: 0,
     sqlInjectionCount: 0,
+    xssCount: 0,
     recentThreats: 0
   });
   const [timelineData, setTimelineData] = useState([]);
   const [lifetimeData, setLifetimeData] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [threatTypeFilter, setThreatTypeFilter] = useState('all');
+  const [directionFilter, setDirectionFilter] = useState('all');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sortConfig, setSortConfig] = useState({ key: 'timestamp', direction: 'desc' });
@@ -30,6 +34,7 @@ function ThreatAnalytics() {
     PortScan: true,
     Malicious: true,
     SQLInjection: true,
+    XSS: true,
     Total: true
   });
   const [selectedThreat, setSelectedThreat] = useState(null);
@@ -51,6 +56,7 @@ function ThreatAnalytics() {
       portScanCount: threatData.filter(t => t.threatType && t.threatType.includes('Port Scan')).length,
       maliciousIpCount: threatData.filter(t => t.threatType && t.threatType.includes('Malicious')).length,
       sqlInjectionCount: threatData.filter(t => t.threatType && t.threatType.includes('SQL Injection')).length,
+      xssCount: threatData.filter(t => t.threatType && t.threatType.includes('XSS')).length,
       recentThreats: threatData.filter(t => new Date(t.timestamp) > last24Hours).length
     };
   }, []);
@@ -96,6 +102,12 @@ function ThreatAnalytics() {
         new Date(t.timestamp) >= hourStart && 
         new Date(t.timestamp) <= hourEnd
       ).length;
+
+      const xssCount = recentThreats.filter(t =>
+        t.threatType && t.threatType.includes('XSS') &&
+        new Date(t.timestamp) >= hourStart &&
+        new Date(t.timestamp) <= hourEnd
+      ).length;
       
       hourlyData.unshift({
         hour: `${hour}:00`,
@@ -103,7 +115,8 @@ function ThreatAnalytics() {
         PortScan: portScanCount,
         Malicious: maliciousCount,
         SQLInjection: sqlInjectionCount,
-        Total: ddosCount + portScanCount + maliciousCount + sqlInjectionCount
+        XSS: xssCount,
+        Total: ddosCount + portScanCount + maliciousCount + sqlInjectionCount + xssCount
       });
     }
     
@@ -160,6 +173,7 @@ function ThreatAnalytics() {
     if (threatType.includes('Port Scan')) return 'threat-portscan';
     if (threatType.includes('Malicious')) return 'threat-malicious';
     if (threatType.includes('SQL Injection')) return 'threat-sqli';
+    if (threatType.includes('XSS')) return 'threat-xss';
     return '';
   };
 
@@ -171,24 +185,24 @@ function ThreatAnalytics() {
         (threat.sourceIP && threat.sourceIP.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (threat.destinationIP && threat.destinationIP.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (threat.threatType && threat.threatType.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (threat.ports && threat.ports.toString().includes(searchTerm.toLowerCase()));
+        (threat.ports && threat.ports.toString().includes(searchTerm.toLowerCase())) ||
+        (threat.direction && threat.direction.toLowerCase().includes(searchTerm.toLowerCase()));
       
       // Threat type filter
       const typeMatch = 
         threatTypeFilter === 'all' || 
         (threat.threatType && threat.threatType.includes(threatTypeFilter));
-      
-      return searchMatch && typeMatch;
-    });
-  }, [threats, searchTerm, threatTypeFilter]);
 
-  // Memoize reversed threats to avoid unnecessary reversals on each render
-  const reversedFilteredThreats = useMemo(() => {
-    return [...filteredThreats].reverse();
-  }, [filteredThreats]);
-  
+      const directionMatch =
+        directionFilter === 'all' ||
+        threat.direction === directionFilter;
+      
+      return searchMatch && typeMatch && directionMatch;
+    });
+  }, [threats, searchTerm, threatTypeFilter, directionFilter]);
+
   const sortedThreats = useMemo(() => {
-    const data = [...reversedFilteredThreats];
+    const data = [...filteredThreats];
     const { key, direction } = sortConfig || {};
     const dir = direction === 'asc' ? 1 : -1;
     return data.sort((a, b) => {
@@ -210,7 +224,7 @@ function ThreatAnalytics() {
       if (as > bs) return 1 * dir;
       return 0;
     });
-  }, [reversedFilteredThreats, sortConfig]);
+  }, [filteredThreats, sortConfig]);
   
   const totalPages = useMemo(() => Math.max(1, Math.ceil(sortedThreats.length / pageSize)), [sortedThreats, pageSize]);
   const paginatedThreats = useMemo(() => {
@@ -228,7 +242,7 @@ function ThreatAnalytics() {
       if (prev.key === key) {
         return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
       }
-      return { key, direction: 'asc' };
+      return { key, direction: key === 'timestamp' ? 'desc' : 'asc' };
     });
     setPage(1);
   }, []);
@@ -262,7 +276,7 @@ function ThreatAnalytics() {
 
   // Export threats as JSON
   const exportToJSON = useCallback(() => {
-    fetch('http://localhost:5000/api/threats/export?format=json')
+    fetch(`${API_BASE_URL}/api/threats/export?format=json`)
       .then(response => response.json())
       .then(data => {
         const jsonContent = JSON.stringify(data, null, 2);
@@ -285,7 +299,7 @@ function ThreatAnalytics() {
 
   // Fetch alert history
   const fetchAlertHistory = useCallback(() => {
-    fetch('http://localhost:5000/api/alerts?limit=100')
+    fetch(`${API_BASE_URL}/api/alerts?limit=100`)
       .then(response => response.json())
       .then(data => {
         setAlertHistory(data);
@@ -296,7 +310,7 @@ function ThreatAnalytics() {
   }, []);
 
   const fetchHealth = useCallback(() => {
-    fetch('http://localhost:5000/api/health', { method: 'GET', mode: 'cors', cache: 'no-cache' })
+    fetch(`${API_BASE_URL}/api/health`, { method: 'GET', mode: 'cors', cache: 'no-cache' })
       .then(response => response.json())
       .then(data => setHealth(data))
       .catch(() => setHealth(null));
@@ -322,7 +336,7 @@ function ThreatAnalytics() {
     setIsLoading(true);
     setError(null);
     
-    fetch('http://localhost:5000/api/threats', {
+    fetch(`${API_BASE_URL}/api/threats`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -333,7 +347,7 @@ function ThreatAnalytics() {
           return response.json().then(err => {
             throw new Error(err.error || `HTTP error! Status: ${response.status}`);
           }).catch(() => {
-            throw new Error(`HTTP error! Status: ${response.status}. Make sure the backend server is running on http://localhost:5000`);
+            throw new Error(`HTTP error! Status: ${response.status}. Make sure the backend server is running on ${API_BASE_URL}`);
           });
         }
         return response.json();
@@ -351,7 +365,7 @@ function ThreatAnalytics() {
         console.error('Error fetching threats:', error);
         let errorMessage = 'Failed to load threat data. ';
         if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-          errorMessage += 'Cannot connect to backend server. Please make sure the Flask server is running on http://localhost:5000';
+          errorMessage += `Cannot connect to backend server. Please make sure the Flask server is running on ${API_BASE_URL}`;
         } else {
           errorMessage += error.message || 'Please try again later.';
         }
@@ -365,7 +379,7 @@ function ThreatAnalytics() {
     fetchThreats();
     fetchAlertHistory();
     fetchHealth();
-  }, [fetchThreats, fetchAlertHistory]);
+  }, [fetchThreats, fetchAlertHistory, fetchHealth]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -375,7 +389,7 @@ function ThreatAnalytics() {
   }, [fetchHealth]);
 
   const formatSize = useCallback((size) => {
-    if (typeof size !== 'number') return '—';
+    if (typeof size !== 'number') return '--';
     if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
     if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${size} B`;
@@ -389,7 +403,7 @@ function ThreatAnalytics() {
       try { sseRef.current.close(); } catch (e) {}
       sseRef.current = null;
     }
-    const es = new EventSource('http://localhost:5000/api/threats/stream');
+    const es = new EventSource(`${API_BASE_URL}/api/threats/stream`);
     es.onmessage = (event) => {
       try {
         const newThreat = JSON.parse(event.data);
@@ -433,7 +447,8 @@ function ThreatAnalytics() {
     { name: 'DDoS', value: stats.ddosCount },
     { name: 'Port Scan', value: stats.portScanCount },
     { name: 'Malicious', value: stats.maliciousIpCount },
-    { name: 'SQL Injection', value: stats.sqlInjectionCount }
+    { name: 'SQL Injection', value: stats.sqlInjectionCount },
+    { name: 'XSS', value: stats.xssCount }
   ]), [stats]);
   
   const toggleSeries = useCallback((key) => {
@@ -453,7 +468,7 @@ function ThreatAnalytics() {
     return (
       <div className="error-container">
         <div className="error-content">
-          <h2>⚠️ Connection Error</h2>
+          <h2>Connection Error</h2>
           <p>{error}</p>
           <div className="error-help">
             <h3>To fix this issue:</h3>
@@ -461,10 +476,10 @@ function ThreatAnalytics() {
               <li>Make sure the backend Flask server is running</li>
               <li>Open a terminal and navigate to: <code>backend/api</code></li>
               <li>Run: <code>python server.py</code></li>
-              <li>The server should start on <code>http://localhost:5000</code></li>
+              <li>The server should start on <code>{API_BASE_URL}</code></li>
             </ol>
           </div>
-          <button onClick={fetchThreats} className="retry-button">🔄 Retry Connection</button>
+          <button onClick={fetchThreats} className="retry-button">Retry Connection</button>
         </div>
       </div>
     );
@@ -476,29 +491,26 @@ function ThreatAnalytics() {
         <h1>Network Security Dashboard</h1>
         <div className="header-actions">
           <div className="last-updated">
-            Last updated: {new Date().toLocaleTimeString()}
+            Last updated: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : 'Waiting for first update'}
           </div>
-          <div className={`live-badge ${isLive ? 'live' : 'idle'}`}>
-            ● {isLive ? 'Live' : 'Idle'}
+          <div className={`live-badge ${isLive ? 'live' : 'idle'}`}>            {isLive ? 'Live' : 'Idle'}
           </div>
           <div className={`live-badge ${(health && health.status === 'ok') ? 'live' : 'idle'}`}>
             API
           </div>
           <div className="last-updated">
-            Log: {(health && health.logFileExists) ? 'Exists' : 'None'} · {formatSize(health?.logFileSize)}
+            Log: {(health && health.logFileExists) ? 'Exists' : 'None'} | {formatSize(health?.logFileSize)}
           </div>
           <div className="last-updated">
-            Packets: {typeof health?.packetsProcessed === 'number' ? health.packetsProcessed : '—'}
+            Packets: {typeof health?.packetsProcessed === 'number' ? health.packetsProcessed : '--'}
           </div>
-          <button onClick={fetchThreats} className="refresh-button">
-            🔄 Refresh Data
-          </button>
+          <button onClick={fetchThreats} className="refresh-button">Refresh Data</button>
         </div>
       </div>
 
       <div className="stats-container">
         <div className="stat-card">
-          <div className="stat-icon">🛡️</div>
+          <div className="stat-icon">ALL</div>
           <div className="stat-content">
             <h3>Total Threats</h3>
             <p className="stat-value">{stats.total}</p>
@@ -506,7 +518,7 @@ function ThreatAnalytics() {
         </div>
         
         <div className="stat-card ddos">
-          <div className="stat-icon">🔥</div>
+          <div className="stat-icon">DDoS</div>
           <div className="stat-content">
             <h3>DDoS Attacks</h3>
             <p className="stat-value">{stats.ddosCount}</p>
@@ -514,7 +526,7 @@ function ThreatAnalytics() {
         </div>
         
         <div className="stat-card portscan">
-          <div className="stat-icon">🔍</div>
+          <div className="stat-icon">PS</div>
           <div className="stat-content">
             <h3>Port Scans</h3>
             <p className="stat-value">{stats.portScanCount}</p>
@@ -522,7 +534,7 @@ function ThreatAnalytics() {
         </div>
         
         <div className="stat-card malicious">
-          <div className="stat-icon">⚠️</div>
+          <div className="stat-icon">OSINT</div>
           <div className="stat-content">
             <h3>Malicious IPs</h3>
             <p className="stat-value">{stats.maliciousIpCount}</p>
@@ -530,7 +542,7 @@ function ThreatAnalytics() {
         </div>
         
         <div className="stat-card sqli">
-          <div className="stat-icon">🧪</div>
+          <div className="stat-icon">SQL</div>
           <div className="stat-content">
             <h3>SQL Injection</h3>
             <p className="stat-value">{stats.sqlInjectionCount}</p>
@@ -538,7 +550,7 @@ function ThreatAnalytics() {
         </div>
         
         <div className="stat-card recent">
-          <div className="stat-icon">⏱️</div>
+          <div className="stat-icon">24h</div>
           <div className="stat-content">
             <h3>Last 24h</h3>
             <p className="stat-value">{stats.recentThreats}</p>
@@ -559,12 +571,24 @@ function ThreatAnalytics() {
           value={threatTypeFilter}
           onChange={(e) => setThreatTypeFilter(e.target.value)}
         >
-          <option value="all">All</option>
+          <option value="all">All Threat Types</option>
           <option value="DDoS">DDoS</option>
           <option value="Port Scan">Port Scan</option>
           <option value="Malicious">Malicious</option>
           <option value="SQL Injection">SQL Injection</option>
           <option value="XSS">XSS</option>
+        </select>
+        <select
+          className="filter-select threat-filter"
+          value={directionFilter}
+          onChange={(e) => setDirectionFilter(e.target.value)}
+        >
+          <option value="all">All Directions</option>
+          <option value="inbound">Inbound</option>
+          <option value="outbound">Outbound</option>
+          <option value="lan">LAN</option>
+          <option value="local">Local</option>
+          <option value="external">External</option>
         </select>
       </div>
 
@@ -576,6 +600,7 @@ function ThreatAnalytics() {
             <button className={`series-btn ${activeSeries.PortScan ? 'active portscan' : ''}`} onClick={() => toggleSeries('PortScan')}>Port Scan</button>
             <button className={`series-btn ${activeSeries.Malicious ? 'active malicious' : ''}`} onClick={() => toggleSeries('Malicious')}>Malicious</button>
             <button className={`series-btn ${activeSeries.SQLInjection ? 'active sqli' : ''}`} onClick={() => toggleSeries('SQLInjection')}>SQL Injection</button>
+            <button className={`series-btn ${activeSeries.XSS ? 'active xss' : ''}`} onClick={() => toggleSeries('XSS')}>XSS</button>
             <button className={`series-btn ${activeSeries.Total ? 'active total' : ''}`} onClick={() => toggleSeries('Total')}>Total</button>
           </div>
           <ResponsiveContainer width="100%" height={320}>
@@ -595,6 +620,7 @@ function ThreatAnalytics() {
               {activeSeries.PortScan && <Line type="monotone" dataKey="PortScan" stroke="#ffb74d" dot={false} strokeWidth={2} />}
               {activeSeries.Malicious && <Line type="monotone" dataKey="Malicious" stroke="#9575cd" dot={false} strokeWidth={2} />}
               {activeSeries.SQLInjection && <Line type="monotone" dataKey="SQLInjection" name="SQL Injection" stroke="#f06292" dot={false} strokeWidth={2} />}
+              {activeSeries.XSS && <Line type="monotone" dataKey="XSS" stroke="#4db6ac" dot={false} strokeWidth={2} />}
               {activeSeries.Total && <Area type="monotone" dataKey="Total" stroke="#4fc3f7" fill="url(#totalGradient)" />}
               <ReferenceLine y={DDOS_THRESHOLD} stroke="#ff5252" strokeDasharray="4 4" label={{ value: 'DDoS thresh', fill: '#ff5252' }} />
               <ReferenceLine y={PORTSCAN_THRESHOLD} stroke="#ffb74d" strokeDasharray="4 4" label={{ value: 'PortScan thresh', fill: '#ffb74d' }} />
@@ -653,15 +679,9 @@ function ThreatAnalytics() {
         <div className="table-header">
           <h2>Recent Threats</h2>
           <div className="header-actions">
-            <button onClick={() => setShowAlertHistory(!showAlertHistory)} className="export-button">
-              📋 {showAlertHistory ? 'Hide' : 'Show'} Alert History
-            </button>
-            <button onClick={exportToCSV} className="export-button">
-              📊 Export CSV
-            </button>
-            <button onClick={exportToJSON} className="export-button">
-              📄 Export JSON
-            </button>
+            <button onClick={() => setShowAlertHistory(!showAlertHistory)} className="export-button">{showAlertHistory ? 'Hide' : 'Show'} Alert History</button>
+            <button onClick={exportToCSV} className="export-button">Export CSV</button>
+            <button onClick={exportToJSON} className="export-button">Export JSON</button>
           </div>
         </div>
         
@@ -690,7 +710,7 @@ function ThreatAnalytics() {
           </div>
         )}
         <div className="table-container">
-        {reversedFilteredThreats.length === 0 ? (
+        {sortedThreats.length === 0 ? (
           <div className="no-threats">No matching threats</div>
         ) : (
         <table className="styled-table">
@@ -698,9 +718,10 @@ function ThreatAnalytics() {
             <tr>
               <th onClick={() => handleSort('timestamp')}>Time</th>
               <th onClick={() => handleSort('threatType')}>Type</th>
-              <th onClick={() => handleSort('sourceIP')}>Source IP</th>
-              <th onClick={() => handleSort('destinationIP')}>Destination IP</th>
-              <th onClick={() => handleSort('ports')}>Ports</th>
+              <th onClick={() => handleSort('direction')}>Direction</th>
+              <th onClick={() => handleSort('sourceIP')}>Actor IP</th>
+              <th onClick={() => handleSort('destinationIP')}>Target IP</th>
+              <th onClick={() => handleSort('ports')}>Service</th>
             </tr>
           </thead>
           <tbody>
@@ -721,6 +742,11 @@ function ThreatAnalytics() {
                   {threat.threatType}
                 </td>
                 <td>
+                  <span className={`direction-badge direction-${threat.direction || 'external'}`}>
+                    {threat.direction || 'external'}
+                  </span>
+                </td>
+                <td>
                   {threat.sourceIP && threat.sourceIP !== 'N/A' ? (
                     <>
                       <span 
@@ -733,9 +759,10 @@ function ThreatAnalytics() {
                       >
                         {threat.sourceIP}
                       </span>
+                      <span className="role-badge">{threat.sourceRole || 'Source'}</span>
                       {threat.geolocation && (
                         <span className="geo-badge" title={`${threat.geolocation.city || 'Unknown'}, ${threat.geolocation.country || 'Unknown'}`}>
-                          🌍 {threat.geolocation.country_code || threat.geolocation.country || 'Unknown'}
+                          {threat.geolocation.country_code || threat.geolocation.country || 'Unknown'}
                         </span>
                       )}
                     </>
@@ -743,7 +770,10 @@ function ThreatAnalytics() {
                     <span>{threat.sourceIP || 'N/A'}</span>
                   )}
                 </td>
-                <td>{threat.destinationIP}</td>
+                <td>
+                  <div>{threat.destinationIP}</div>
+                  <span className="role-badge">{threat.destinationRole || 'Target'}</span>
+                </td>
                 <td>{threat.ports}</td>
               </tr>
             ))}
@@ -782,7 +812,7 @@ function ThreatAnalytics() {
       </div>
 
       <div className="chat-container">
-        <ChatPanel />
+        <AnalysisBot />
       </div>
 
       {/* Threat Details Modal */}
@@ -791,7 +821,7 @@ function ThreatAnalytics() {
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Threat Details</h2>
-              <button className="modal-close" onClick={closeThreatModal}>×</button>
+              <button className="modal-close" onClick={closeThreatModal}>x</button>
             </div>
             <div className="modal-body">
               <div className="detail-row">
@@ -805,15 +835,19 @@ function ThreatAnalytics() {
                 </span>
               </div>
               <div className="detail-row">
-                <span className="detail-label">Source IP:</span>
-                <span className="detail-value">{selectedThreat.sourceIP}</span>
+                <span className="detail-label">Direction:</span>
+                <span className="detail-value">{selectedThreat.direction || 'external'}</span>
               </div>
               <div className="detail-row">
-                <span className="detail-label">Destination IP:</span>
-                <span className="detail-value">{selectedThreat.destinationIP}</span>
+                <span className="detail-label">Actor IP:</span>
+                <span className="detail-value">{selectedThreat.sourceIP} ({selectedThreat.sourceRole || 'Source'})</span>
               </div>
               <div className="detail-row">
-                <span className="detail-label">Ports:</span>
+                <span className="detail-label">Target IP:</span>
+                <span className="detail-value">{selectedThreat.destinationIP} ({selectedThreat.destinationRole || 'Target'})</span>
+              </div>
+              <div className="detail-row">
+                <span className="detail-label">Service:</span>
                 <span className="detail-value">{selectedThreat.ports}</span>
               </div>
               {selectedThreat.meta && (
